@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Musa WhatsApp Bot Platform — Prompt</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="icon-btn" type="button" aria-label="Menu">≡</button>
+  <img class="logo" src="/logo-doll.webp" onerror="this.onerror=null;this.src='/logo.svg'" alt="Musa WhatsApp Bot logo">
+  <button class="icon-btn" type="button" aria-label="More options">•••</button>
+  <h1 class="sr-only">Musa WhatsApp Bot Platform</h1>
+  <p class="sr-only">Link your WhatsApp, set your prompt and media — the bot replies to your customers, and confirmed leads are sent to you by email + WhatsApp.</p>
+</header>
+
+<main>
+  <p class="notice">No dummy data here. Everything starts empty — write your own prompt. Nothing is pre-filled.</p>
+
+  <div class="card">
+    <label for="businessId">Business ID — write your own (English, no spaces, e.g. musa-social-store)</label>
+    <input id="businessId" placeholder="musa-social-store" autocomplete="off">
+    <button class="secondary" onclick="refreshStatus()">Load my business</button>
+  </div>
+
+  <section class="card">
+    <h2>Business Prompt / Plan</h2>
+    <p class="sub">Tell your assistant about your business in your own words. Your assistant reads the whole thing, understands it properly, and then deals with every customer from it — your services, your prices, your location, your offers, and how you want customers treated.</p>
+    <label for="name">Your business name</label>
+    <input id="name" placeholder="Musa Social Store" autocomplete="off">
+    <label for="prompt">Your business, in your own words</label>
+    <textarea id="prompt" maxlength="8000" placeholder="My business is... We sell... Location... Rate list... Deals... If a customer says this, say that..."></textarea>
+    <p class="char-count" id="promptCount">0 / 8000 characters. The more you tell it, the better it deals with customers. Leave it empty and the assistant simply asks customers what they need.</p>
+    <button onclick="savePrompt()">Save — teach my assistant</button>
+    <div id="savedPromptWrap" style="display:none">
+      <label>Saved prompt:</label>
+      <div class="saved" id="savedPrompt"></div>
+    </div>
+  </section>
+
+  <p><a class="page-link secondary" href="/media.html">Next: Upload your media →</a></p>
+</main>
+
+<nav class="bottom-nav" aria-label="Dashboard pages">
+  <a href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Home</a>
+  <a href="/connect.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>Connect</a>
+  <a href="/brain.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Brain</a>
+  <a href="/media.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Media</a>
+  <a href="/leads.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Leads</a>
+  <a href="/notify.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts</a>
+</nav>
+
+<div id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
