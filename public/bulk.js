@@ -146,15 +146,57 @@ function showBulkCampaigns() { showView('campaigns'); }
 // (visibilitychange / pageshow); if the page was actually away for a
 // moment (not an instant bounce), the walkthrough waits ~1s and opens
 // the NEXT chat. The ONLY setTimeout in this file is that 1s timer.
+// The walkthrough state is ALSO saved to sessionStorage on every step
+// (see makeDraftsSave): on Android, coming back from the WhatsApp app
+// often makes Chrome RELOAD this tab instead of restoring it, and a
+// reload used to wipe the walkthrough after chat 1. Now the reload
+// resumes it (makeDraftsResumeAfterReload) — same tab, same campaign,
+// next chat ~1s after the page comes back.
 let makeDrafts = null; // { campaign, idx, armed, leftAt }
 let makeDraftsAutoTimer = null;
 
 function makeDraftsClearTimer() {
   if (makeDraftsAutoTimer) { clearTimeout(makeDraftsAutoTimer); makeDraftsAutoTimer = null; }
 }
+// --- Walkthrough state, saved so a reload cannot kill it -------------
+// BUG (2026-11-21): the walkthrough lived ONLY in memory. On Android,
+// coming back from the WhatsApp app often makes Chrome RELOAD this tab
+// instead of restoring it — the script re-ran, makeDrafts was null, and
+// the walkthrough died after chat 1, leaving every other draft sitting
+// on the board. So every step is now saved to sessionStorage (same tab,
+// survives a reload, dies with the tab). On load, an armed walkthrough
+// resumes ONLY if it left less than 10 minutes ago AND this load is the
+// page coming back (reload / back-forward) — a fresh visit to the Bulk
+// page never opens a chat by itself.
+const MAKE_DRAFTS_STORE_KEY = 'musaMakeDrafts.v1';
+const MAKE_DRAFTS_RESUME_MAX_MS = 10 * 60 * 1000;
+function makeDraftsSave() {
+  try {
+    if (!makeDrafts) { sessionStorage.removeItem(MAKE_DRAFTS_STORE_KEY); return; }
+    sessionStorage.setItem(MAKE_DRAFTS_STORE_KEY, JSON.stringify({
+      campaignId: makeDrafts.campaign && makeDrafts.campaign.id,
+      idx: makeDrafts.idx,
+      armed: makeDrafts.armed,
+      leftAt: makeDrafts.leftAt || 0,
+    }));
+  } catch (e) { /* storage unavailable — walkthrough still works in memory */ }
+}
+function makeDraftsLoadStored() {
+  try {
+    const raw = sessionStorage.getItem(MAKE_DRAFTS_STORE_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s || !s.campaignId || typeof s.idx !== 'number') return null;
+    return s;
+  } catch (e) { return null; }
+}
+function makeDraftsClearStored() {
+  try { sessionStorage.removeItem(MAKE_DRAFTS_STORE_KEY); } catch (e) {}
+}
 function makeDraftsDisarm() {
   makeDraftsClearTimer();
   if (makeDrafts) makeDrafts.armed = false;
+  makeDraftsClearStored();
 }
 
 async function startMakeDrafts(campaignId) {
@@ -163,6 +205,7 @@ async function startMakeDrafts(campaignId) {
     const campaign = d.campaign;
     if (!campaign || !(campaign.numbers || []).length) { toast('Campaign not found.'); return; }
     makeDrafts = { campaign, idx: 0, armed: false, leftAt: 0 };
+    makeDraftsSave();
     renderMakeDrafts();
     showView('makedrafts');
     // Open the FIRST chat right away — this runs on the "Make drafts" tap.
@@ -201,7 +244,12 @@ function makeDraftsOpenCurrent() {
   if (!link) return false;
   // Arm the auto-advance BEFORE navigating away, so the return trip
   // (back from WhatsApp) is recognised as part of this walkthrough.
+  // leftAt is stamped here too — the hidden event may not fire before
+  // the page unloads, and the reload-resume needs it to tell a real
+  // visit apart from an instant bounce.
   makeDrafts.armed = true;
+  makeDrafts.leftAt = Date.now();
+  makeDraftsSave();
   location.href = link;
   return true;
 }
@@ -224,6 +272,7 @@ function makeDraftsAdvance() {
     makeDraftsOpenCurrent();
   } else {
     makeDrafts = null;
+    makeDraftsSave(); // clears the stored walkthrough — it is done
     toast('All drafts opened.');
     showBulkCampaigns();
   }
@@ -253,6 +302,36 @@ function makeDraftsOnHidden() {
 function makeDraftsOnVisible() {
   if (document.visibilityState === 'visible') makeDraftsOnReturn();
   else makeDraftsOnHidden();
+}
+
+// The page was RELOADED while the walkthrough was armed (Android
+// Chrome often reloads the tab when coming back from the WhatsApp
+// app, instead of restoring it). The in-memory walkthrough is gone,
+// so rebuild it from the saved step and carry on with the next chat.
+async function makeDraftsResumeAfterReload() {
+  const stored = makeDraftsLoadStored();
+  if (!stored || !stored.armed) return;
+  const awayMs = stored.leftAt ? Date.now() - stored.leftAt : 0;
+  if (awayMs < 1200 || awayMs > MAKE_DRAFTS_RESUME_MAX_MS) { makeDraftsClearStored(); return; }
+  // Only resume when this load is the page coming back (reload or
+  // back-forward). A fresh visit to the Bulk page must never open a
+  // chat by itself.
+  let navType = '';
+  try {
+    const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+    navType = nav ? nav.type : '';
+  } catch (e) {}
+  if (navType !== 'reload' && navType !== 'back_forward') return;
+  try {
+    const d = await apiJson(api('/campaigns/' + encodeURIComponent(stored.campaignId)));
+    const campaign = d.campaign;
+    if (!campaign || !(campaign.numbers || []).length) { makeDraftsClearStored(); return; }
+    makeDrafts = { campaign, idx: Math.min(stored.idx, campaign.numbers.length - 1), armed: true, leftAt: stored.leftAt };
+    renderMakeDrafts();
+    showView('makedrafts');
+    // This reload IS the return from WhatsApp — open the next chat ~1s later.
+    makeDraftsScheduleNext();
+  } catch (e) { makeDraftsClearStored(); }
 }
 
 // --- Numbers / message preview ----------------------------------------------
@@ -443,6 +522,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // by itself. Only armed while the walkthrough is running.
   document.addEventListener('visibilitychange', makeDraftsOnVisible);
   window.addEventListener('pageshow', () => makeDraftsOnReturn());
+  // If the tab was reloaded mid-walkthrough (back from WhatsApp),
+  // resume the walkthrough from the saved step.
+  makeDraftsResumeAfterReload();
   const msg = document.getElementById('bulkMessage');
   if (msg) {
     msg.addEventListener('input', updateBulkMsgPreview);
