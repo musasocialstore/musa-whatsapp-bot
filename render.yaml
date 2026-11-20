@@ -1,0 +1,24 @@
+# Render — free web service for the Musa WhatsApp Bot Platform.
+# Deploy via: Render dashboard > New > Web Service > connect the GitHub repo
+# containing this folder, OR "New from render.yaml" in the same repo.
+# No real keys are in this file — set GEMINI_API_KEY / RESEND_API_KEY
+# in the Render dashboard (Environment Variables) after deploy.
+services:
+  - type: web
+    name: musa-whatsapp-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: RESEND_FROM_EMAIL
+        value: onboarding@resend.dev
+      # Set these two in the Render dashboard — never put real keys here:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
