@@ -12,7 +12,7 @@
   },
   "description": "Multi-business WhatsApp bot platform for Musa Social Store. Businesses link their own WhatsApp by pairing code (Baileys), set a prompt + media, and the Gemini-powered bot replies to their customers and forwards leads by email + WhatsApp.",
   "engines": {
-    "node": "20"
+    "node": "26.x"
   },
   "main": "server.js",
   "name": "musa-whatsapp-bot-platform",
