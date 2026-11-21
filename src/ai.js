@@ -614,7 +614,12 @@ function buildSystemPrompt(business, media) {
 // to keep working.
 async function generateReply(business, customerText, history, opts) {
   const media = (business && business.media) || [];
-  const picked = pickMedia(media, customerText);
+  // Design preview (2026-11-21, Zaib): when the customer asks to SEE a
+  // design, NO stored file is ever attached as the "design" — the
+  // generated preview (or nothing, with the team line) is the answer.
+  // A stored plans poster sent as a design is exactly what went wrong
+  // in the 11:11 PM chat with Zaib JUTT Gondal.
+  const picked = opts && opts.imageRequest ? null : pickMedia(media, customerText);
   const lang = detectLanguage(customerText);
   // Design preview (2026-11-21): the reply's words must match what
   // actually happens — a picture is attached only when one was really
@@ -646,8 +651,11 @@ async function generateReply(business, customerText, history, opts) {
     if (!text) throw new Error('Gemini returned an empty reply');
     // If the AI picked media but its text never mentions it, add the
     // short human line about the file, so the customer is never sent
-    // a bare photo/video with no explanation.
-    if (picked && !/(photo|image|video|file|banner|logo|price list|deal|demo)/i.test(text)) {
+    // a bare photo/video with no explanation. "design / preview /
+    // picture" count as mentioning it — without them the line was
+    // doubled onto a reply that already talked about the design
+    // (11:11 PM chat, 2026-11-21).
+    if (picked && !/(photo|image|video|file|banner|logo|price list|deal|demo|design|preview|picture)/i.test(text)) {
       text += ' ' + mediaIntroText(picked, lang);
     }
     return { text, mediaId: picked ? picked.id : null };
@@ -1028,6 +1036,7 @@ async function generateCustomerImage(business, customerText, history) {
   const key = process.env.GEMINI_API_KEY;
   if (!key || key === 'YOUR_GEMINI_API_KEY_HERE') return { ok: false, reason: 'no-key' };
   const imagePrompt = buildImagePrompt(business, customerText, history);
+  let lastReason = 'model-unavailable';
   for (const model of IMAGE_MODELS) {
     try {
       const ctrl = new AbortController();
@@ -1045,10 +1054,14 @@ async function generateCustomerImage(business, customerText, history) {
         });
       } finally { clearTimeout(timer); }
       if (!res.ok) {
-        // 404/400 = this model is not available for this key — try the next one.
-        if (res.status === 404 || res.status === 400) continue;
         const errText = await res.text().catch(() => '');
         console.error('Image generation failed:', model, res.status, errText.slice(0, 200));
+        // 404/400 = this model is not available for this key; 429/503
+        // = quota or overload — the NEXT model may have its own quota,
+        // so try it before giving up. (2026-11-21: the first request
+        // died on a 429 "quota exceeded" and the fallback was never
+        // tried, so the customer got no picture at all.)
+        if ([404, 400, 429, 503].includes(res.status)) { lastReason = 'api-' + res.status; continue; }
         return { ok: false, reason: 'api-' + res.status };
       }
       const data = await res.json();
@@ -1062,7 +1075,7 @@ async function generateCustomerImage(business, customerText, history) {
       return { ok: false, reason: 'error' };
     }
   }
-  return { ok: false, reason: 'model-unavailable' };
+  return { ok: false, reason: lastReason };
 }
 function designCaption(lang) {
   const lines = {
