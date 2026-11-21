@@ -97,6 +97,22 @@ async function loadBrain() {
   } catch (e) {
     toast('Brain could not be loaded: ' + e.message);
   }
+  loadBrainFileCounts();
+}
+
+// Brain Files card (2026-11-21, Zaib — reference design): how many
+// files are brain knowledge vs customer files. Real counts from /media.
+async function loadBrainFileCounts() {
+  try {
+    const d = await apiJson(api('/media'));
+    const list = d.media || [];
+    const knowledge = list.filter((m) => m.purpose !== 'customer').length;
+    const customer = list.filter((m) => m.purpose === 'customer').length;
+    const k = document.getElementById('brainKnowledgeCount');
+    if (k) k.textContent = knowledge + (knowledge === 1 ? ' file' : ' files');
+    const c = document.getElementById('brainCustomerCount');
+    if (c) c.textContent = customer + (customer === 1 ? ' file' : ' files');
+  } catch (e) { /* Business ID not entered yet — counts stay at 0 */ }
 }
 
 function showAnalyzing() {

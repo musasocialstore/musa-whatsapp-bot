@@ -134,7 +134,12 @@ async function getCode() {
     // Use api() so an empty Business ID can never build "/api/business//..." (404).
     const d = await apiJson(api('/pairing-code'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
     if (!d.pairingCode) throw new Error('The server did not return a code — please try again.');
-    $('pairingCode').textContent = d.pairingCode;
+    // The code shows as 6 boxes, like the reference design.
+    const codeEl = $('pairingCode');
+    const code = String(d.pairingCode || '');
+    codeEl.innerHTML = /^[0-9]{6}$/.test(code)
+      ? code.split('').map((c) => `<span>${esc(c)}</span>`).join('')
+      : esc(code);
     hideLimitNote();
     if (has('pairingHelp')) $('pairingHelp').textContent = d.instructions || '';
     startCountdown(d.expiresInSeconds || 60);
@@ -181,6 +186,7 @@ async function refreshStatus() {
       if (has('setupStep3')) $('setupStep3').classList.toggle('done', mediaLen > 0);
       if (has('homeStatusTitle')) $('homeStatusTitle').textContent = linked ? 'WhatsApp is linked' : (d.whatsappStatus === 'waiting-pairing' ? 'Waiting — enter the code' : (connecting ? 'Connecting to WhatsApp…' : 'WhatsApp is not linked yet'));
       if (has('homeStatusText')) $('homeStatusText').textContent = linked ? 'Your bot is replying to customers automatically.' : 'WhatsApp is not linked yet.';
+      if (has('welcomeStatus')) $('welcomeStatus').textContent = linked ? 'WhatsApp Status: Connected' : 'WhatsApp is not linked yet.';
       if (has('leadsCount')) {
         apiJson(api('/leads')).then((ld) => { if (has('leadsCount')) $('leadsCount').textContent = String((ld.leads || []).length); }).catch(() => {});
       }
@@ -225,18 +231,32 @@ async function savePrompt() {
 }
 
 // --- Media ---
+// Kind filter (2026-11-21, Zaib — reference design Photo / Video / Voice).
+let mediaFilter = 'all';
+let lastMediaList = [];
+function setMediaFilter(kind) {
+  mediaFilter = kind;
+  document.querySelectorAll('.seg-tabs button').forEach((b) => {
+    b.classList.toggle('active', b.id === 'mediaFilter' + kind[0].toUpperCase() + kind.slice(1));
+  });
+  const f = $('mediaFile');
+  if (f) f.accept = kind === 'all' ? 'image/*,video/*,audio/*' : kind + '/*';
+  renderMedia(lastMediaList);
+}
 async function loadMedia() {
   if (!has('mediaList')) return;
   try {
     const d = await apiJson(api('/media'));
-    renderMedia(d.media || []);
+    lastMediaList = d.media || [];
+    renderMedia(lastMediaList);
   } catch (e) { /* Business ID not entered yet — list stays empty */ }
 }
 function renderMedia(list) {
   const el = $('mediaList');
   if (!el) return;
-  if (!list.length) { el.innerHTML = '<p class="muted empty-note">No media yet.</p>'; return; }
-  el.innerHTML = list.map((m) => {
+  const shown = mediaFilter === 'all' ? list : list.filter((m) => m.kind === mediaFilter);
+  if (!shown.length) { el.innerHTML = '<p class="muted empty-note">No media yet.</p>'; return; }
+  el.innerHTML = shown.map((m) => {
     const preview = m.kind === 'image' ? `<img src="${esc(m.url)}" alt="">`
       : m.kind === 'video' ? `<video src="${esc(m.url)}" controls></video>`
       : `<audio src="${esc(m.url)}" controls></audio>`;
@@ -328,6 +348,7 @@ async function loadLeads() {
     const d = await apiJson(api('/leads'));
     const el = $('leads');
     const list = d.leads || [];
+    if (has('leadsTotalCount')) $('leadsTotalCount').textContent = String(list.length);
     if (!list.length) { el.innerHTML = '<p class="muted empty-note">No leads yet.</p>'; return; }
     el.innerHTML = list.map((l) => {
       const log = (l.forwardLog || []).map((x) => `${x.channel}: ${x.ok ? 'sent' : x.skipped ? 'skipped — ' + (x.reason || '') : 'failed — ' + (x.error || '')}`).join(' | ');
@@ -335,13 +356,23 @@ async function loadLeads() {
         <p><b>${esc(l.customerName || '(no name given)')}</b> — ${esc(l.customerNumber || '')}
         <span class="badge ${l.status === 'confirmed' ? 'confirmed' : 'new'}">${esc((l.status || 'new').toUpperCase())}</span></p>
         <p>Wants: ${esc(l.wants || '')}</p>
+        ${l.email ? `<p>Email: ${esc(l.email)}</p>` : ''}
         <p>Address: ${esc(l.address || '(not given)')}</p>
         <p class="meta">${esc(l.createdAt || '')} · Email: ${l.forwardedEmail ? 'sent' : 'not sent'} · WhatsApp: ${l.forwardedWhatsapp ? 'sent' : 'not sent'}</p>
         ${log ? `<p class="meta">${esc(log)}</p>` : ''}
         ${l.status !== 'confirmed' ? `<button class="small" onclick="confirmLead('${esc(l.id)}')">Mark confirmed — send by email + WhatsApp</button>` : ''}
       </div>`;
     }).join('');
+    filterLeadList();
   } catch (e) { /* Business ID not entered yet — list stays empty */ }
+}
+// Search box on the Leads page (2026-11-21, Zaib — reference design):
+// filters the rendered cards by name, number, want or address.
+function filterLeadList() {
+  const q = (has('leadSearch') ? $('leadSearch').value : '').trim().toLowerCase();
+  document.querySelectorAll('#leads .lead').forEach((el) => {
+    el.style.display = !q || el.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
 }
 async function confirmLead(id) {
   try {

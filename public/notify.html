@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b3b37">
 <title>Musa WhatsApp Bot Platform — Alerts</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=20261122">
 </head>
 <body>
 <header class="topbar">
@@ -42,6 +42,8 @@
 
   <div class="scroll-area">
     <section class="card">
+      <h2 style="margin:0 0 4px">Alert settings</h2>
+      <p class="muted" style="margin-top:0">Get instant alerts via email &amp; WhatsApp.</p>
       <label for="name">Business name</label>
       <input id="name" autocomplete="off">
       <label for="leadEmail">Alert email</label>
@@ -64,9 +66,16 @@
 
   <!-- Fixed action bar: Save is always on screen. -->
   <div class="action-bar"><button onclick="saveNotify()">Save alert settings</button></div>
+
+  <nav class="bottom-nav" aria-label="Pages">
+    <a href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Home</a>
+    <a href="/connect.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>Connect</a>
+    <a href="/brain.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Brain</a>
+    <button type="button" onclick="toggleDrawer()" aria-label="More pages"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>More</button>
+  </nav>
 </main>
 
 <div id="toast"></div>
-<script src="/app.js?v=20261121"></script>
+<script src="/app.js?v=20261122"></script>
 </body>
 </html>

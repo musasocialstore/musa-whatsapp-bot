@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b3b37">
 <title>Musa WhatsApp Bot Platform — Leads</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=20261122">
 </head>
 <body>
 <header class="topbar">
@@ -41,17 +41,29 @@
   </div>
 
   <div class="scroll-area">
+    <div class="leads-total">
+      <span class="leads-total-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+      <div><b>Total leads</b><span class="leads-total-num" id="leadsTotalCount">0</span></div>
+    </div>
+    <input id="leadSearch" class="leads-search" placeholder="Search leads…" autocomplete="off" oninput="filterLeadList()">
     <section class="card list-card">
-      <h2>Leads</h2>
+      <h2>Leads list</h2>
       <div id="leads" class="list-scroll" style="margin-top:10px"><p class="muted empty-note">No leads yet.</p></div>
     </section>
   </div>
 
   <!-- Fixed action bar: Refresh is always on screen. -->
   <div class="action-bar"><button class="secondary" onclick="loadLeads()">Refresh leads</button></div>
+
+  <nav class="bottom-nav" aria-label="Pages">
+    <a href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Home</a>
+    <a href="/connect.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>Connect</a>
+    <a href="/brain.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Brain</a>
+    <button type="button" onclick="toggleDrawer()" aria-label="More pages"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>More</button>
+  </nav>
 </main>
 
 <div id="toast"></div>
-<script src="/app.js?v=20261121"></script>
+<script src="/app.js?v=20261122"></script>
 </body>
 </html>

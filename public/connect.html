@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b3b37">
 <title>Musa WhatsApp Bot Platform — Connect</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=20261122">
 </head>
 <body>
 <header class="topbar">
@@ -42,24 +42,43 @@
 
   <div class="scroll-area">
     <section class="card">
+      <div style="text-align:center">
+        <span class="wa-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5.1-1.3A10 10 0 1 0 12 2zm0 18.2c-1.6 0-3.1-.4-4.4-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.6-6.1c-.3-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1-.2.3-.6.8-.8 1-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4 0-.5.1-.7l.4-.5c.1-.2.1-.3 0-.5l-.8-1.9c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1.1 2.7c.1.2 1.9 2.9 4.5 4 .6.3 1.1.4 1.5.6.6.2 1.2.2 1.6.1.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.6-.3z"/></svg></span>
+      </div>
       <label for="phone">WhatsApp number (with country code)</label>
       <input id="phone" inputmode="tel" autocomplete="tel">
-      <div id="pairingCode" aria-live="polite">— — — —</div>
+      <div id="pairingCode" class="code-boxes" aria-live="polite">— — — —</div>
       <p class="limit-note" id="pairingLimitNote" data-phone="" hidden></p>
       <p class="muted" id="pairingCountdown"></p>
       <p class="muted" id="pairingHelp"></p>
-      <p>WhatsApp status: <span id="statusBadge" class="badge not-linked">● NOT LINKED</span>
+      <p>Connection status: <span id="statusBadge" class="badge not-linked">● NOT LINKED</span>
         <button class="secondary small" onclick="refreshStatus()">Refresh status</button>
         <button id="disconnectBtn" class="danger small" style="display:none" onclick="disconnect()">Disconnect</button></p>
       <p class="muted" id="statusDetail">WhatsApp is not linked yet.</p>
+      <details class="help-details">
+        <summary>Need help? Get pairing code, step by step</summary>
+        <ol>
+          <li>Tap "Get pairing code" below and wait for the 6-digit code.</li>
+          <li>On your phone, open WhatsApp → Settings → Linked devices.</li>
+          <li>Tap "Link a device", then "Link with phone number instead".</li>
+          <li>Enter the 6-digit code here. The code works for 60 seconds.</li>
+        </ol>
+      </details>
     </section>
   </div>
 
   <!-- Fixed action bar: Get pairing code is always on screen. -->
   <div class="action-bar"><button id="pairBtn" onclick="getCode()">Get pairing code</button></div>
+
+  <nav class="bottom-nav" aria-label="Pages">
+    <a href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Home</a>
+    <a href="/connect.html" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>Connect</a>
+    <a href="/brain.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Brain</a>
+    <button type="button" onclick="toggleDrawer()" aria-label="More pages"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>More</button>
+  </nav>
 </main>
 
 <div id="toast"></div>
-<script src="/app.js?v=20261121"></script>
+<script src="/app.js?v=20261122"></script>
 </body>
 </html>

@@ -104,6 +104,13 @@ function bulkGoStep(n) {
   if (step) step.classList.add('active');
   const prog = document.getElementById('wizardProgress');
   if (prog) prog.textContent = 'Step ' + n + ' of 4';
+  // Step indicator (2026-11-21, Zaib — reference design): the current
+  // step is highlighted, finished steps are marked done.
+  document.querySelectorAll('#bulkSteps .step').forEach((el) => {
+    const s = Number(el.getAttribute('data-step') || 0);
+    el.classList.toggle('current', s === n);
+    el.classList.toggle('done', s < n);
+  });
   updateWizardBar();
   if (n === 4) renderBulkReview();
 }
