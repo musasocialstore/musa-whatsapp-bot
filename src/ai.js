@@ -514,6 +514,9 @@ function pickMedia(media, customerText) {
   let best = null;
   let bestScore = 0;
   for (const m of items) {
+    // Knowledge files are brain-only — never send one to a customer.
+    // A missing purpose means an old upload: treat it as knowledge.
+    if (m.purpose !== 'customer') continue;
     let score = 0;
     const useFor = String(m.useFor || '');
     const caption = String(m.caption || '');
@@ -560,8 +563,13 @@ function buildSystemPrompt(business, media) {
   ].filter(Boolean).join('\n');
   const brainMem = (business.brainMemory || []).slice(-10)
     .map((m) => `${m.role === 'owner' ? 'Owner taught' : 'Brain understood'}: ${m.text}`).join('\n');
-  const mediaList = (media || [])
-    .map((m) => `- ${m.kind} (${classifyMedia(m)}): ${m.originalName}${m.caption ? ' — ' + m.caption : ''}${m.useFor ? ` (send when customer asks about: ${m.useFor})` : ''}${m.ownerNote ? ` [owner says this file is for: ${m.ownerNote}]` : ''}${m.description ? ` [AI saw in this file: ${m.description.slice(0, 300)}]` : ''}`)
+  const customerMedia = (media || []).filter((m) => m.purpose === 'customer');
+  const knowledgeMedia = (media || []).filter((m) => m.purpose !== 'customer');
+  const mediaList = customerMedia
+    .map((m) => `- ${m.kind} (${classifyMedia(m)}): ${m.originalName}${m.caption ? ' — owner private note (NEVER send these words to the customer, write your own short line): ' + m.caption : ''}${m.useFor ? ` (send when customer asks about: ${m.useFor})` : ''}${m.ownerNote ? ` [owner private note: ${m.ownerNote}]` : ''}${m.description ? ` [AI saw in this file: ${m.description.slice(0, 300)}]` : ''}`)
+    .join('\n');
+  const knowledgeList = knowledgeMedia
+    .map((m) => `- ${m.kind}: ${m.originalName}${m.description ? ` — what is in it: ${m.description.slice(0, 300)}` : ''}${m.ownerNote ? ` (owner note: ${m.ownerNote})` : ''}${m.caption ? ` (owner note: ${m.caption})` : ''}`)
     .join('\n');
   return [
     `You are a friendly HUMAN team member working for this business — talk like a real friendly person chatting on WhatsApp, NOT like a robot, a board, or a template. Be warm, natural, and short. Never say you are an AI, an assistant, a robot, or a bot — you are the business's own team member.`,
@@ -576,11 +584,14 @@ function buildSystemPrompt(business, media) {
     '- Use the customer\'s name if they gave it. Ask ONE helpful question (which deal, which type, where to deliver, when they need it) — then stop and wait for their answer.',
     '- ALWAYS reply in the exact language the customer used in their last message — any language in the world (English, Urdu, Roman Urdu, Arabic, Hindi, Spanish, French, German, Turkish, Chinese, and every other language). If the customer switches language, switch with them immediately. If they say "Urdu please", reply in Roman Urdu.',
     '- Use the services and prices from the facts above when the customer asks. If you do not know a price, date or payment number, say you will confirm it and ask for the customer\'s name and what exactly they need — never guess.',
+    '- Prices: NEVER give a final or confirmed price. When the customer asks about price, give the STARTING price or range from the rate list above (for example "starts from Rs 1,500") and say the team will contact them to confirm the final price for their exact work. If no price is in the facts, say the team will tell them the price — never invent one.',
     '- If the customer gives their name / number / address / what they want, acknowledge it warmly. When the customer has fully confirmed what they want (they said yes / done / final / book it / banwa do), reply in this exact shape, in the customer\'s own language: "OK, aapki sari information maine note kar li hai, main apni team se baat karta hun — isi chat mein hamari team mein se koi aap se rabta kar lega."',
     '- Speak as the business, on the owner\'s behalf. Never claim to be an AI or a robot.',
     'Media — understand it, don\'t just attach it:',
     '- Each file below is labelled with what it IS (logo / offer banner / price list / demo / intro). Send one ONLY when it really fits what the customer is asking about — a deal question gets the offer banner, a price question gets the price list, a first greeting can get the logo, "show me" gets the demo. Always send a short written line WITH it, saying what it is ("Here is our deal banner — this is today\'s offer..."). Never send media on every message, never send it at random.',
-    mediaList ? `Media available:\n${mediaList}` : 'No media uploaded yet.',
+    '- The owner\'s private notes (caption / useFor / owner note) are for YOUR understanding only — never send those words to the customer. When you send a file, write your own short human line about it.',
+    customerMedia.length ? `Media you MAY send to customers (only when one really fits what they ask):\n${mediaList}` : 'No customer media uploaded yet — send no files.',
+    knowledgeList ? `Brain knowledge files — NEVER send these to any customer, they are only for your own knowledge. Answer FROM what is in them, in your own words:\n${knowledgeList}` : '',
     'WhatsApp policy — stay safe, or the number gets banned:',
     '- ONLY reply to a message the customer sent first. NEVER start a conversation yourself, NEVER send a message to someone who did not message you, NEVER mass-message, NEVER send unsolicited promos or offers to a list of numbers.',
     '- ONE short reply per incoming customer message (plus one media file only if it really fits). Do not send follow-up messages, do not chase, do not repeat yourself.',
@@ -856,7 +867,53 @@ async function describeImage(buffer, mimeType, ownerNote) {
   }
 }
 
-// --- Never send the identical reply twice in a row to the same chat ---
+// --- Customer image (Gemini vision, 2026-11-21, Zaib) ---
+// A customer sends a picture (for example a design they like) instead
+// of words. Describe what is shown so the bot can answer FROM it:
+// what kind of design or business it is, any business name or text
+// visible, and what the customer probably wants. Returns
+// { ok, description } or { ok:false, error } — never a fake description.
+async function describeCustomerImage(buffer, mimeType, caption) {
+  if (!isAiConfigured()) {
+    return { ok: false, error: 'AI is not connected yet — no Gemini API key is set.' };
+  }
+  try {
+    const cap = String(caption || '').trim();
+    const prompt = `A customer sent this image to a business on WhatsApp${cap ? ` and wrote with it: "${cap.slice(0, 300)}"` : ''}. Describe in detail, in plain words: what is shown, any text, business name or prices visible, what kind of design or business it looks like (for example a shop, a selling page, a website design, a product, a logo), and what the customer probably wants from the business. Keep it to 3-5 short sentences.`;
+    const result = await generateContentResilient([
+      { text: prompt },
+      { inlineData: { data: Buffer.from(buffer).toString('base64'), mimeType: mimeType || 'image/jpeg' } },
+    ]);
+    const text = result.response.text().trim();
+    if (!text) throw new Error('Gemini returned an empty description');
+    return { ok: true, description: text };
+  } catch (e) {
+    console.error('Describe customer image failed:', e && e.message);
+    return { ok: false, error: 'Gemini could not analyse this image right now (' + String((e && e.message) || e).slice(0, 120) + ').' };
+  }
+}
+
+// --- Customer voice note (Gemini audio, 2026-11-21, Zaib) ---
+// A customer sends a voice message instead of typing. Transcribe it
+// so the bot can answer what was actually said. Returns
+// { ok, text } or { ok:false, error } — never a fake transcription.
+async function transcribeAudio(buffer, mimeType) {
+  if (!isAiConfigured()) {
+    return { ok: false, error: 'AI is not connected yet — no Gemini API key is set.' };
+  }
+  try {
+    const result = await generateContentResilient([
+      { text: 'Transcribe this voice message exactly, in the language spoken (it may be Roman Urdu, Urdu, English, or mixed). Return ONLY the transcription, no explanation, no extra words.' },
+      { inlineData: { data: Buffer.from(buffer).toString('base64'), mimeType: mimeType || 'audio/ogg' } },
+    ]);
+    const text = result.response.text().trim();
+    if (!text) throw new Error('Gemini returned an empty transcription');
+    return { ok: true, text };
+  } catch (e) {
+    console.error('Transcribe audio failed:', e && e.message);
+    return { ok: false, error: 'Gemini could not hear this voice message right now (' + String((e && e.message) || e).slice(0, 120) + ').' };
+  }
+}
 // The fallback picks a variant from the customer's message, so the SAME
 // message ("Website create karvani hai" twice) got the SAME reply twice.
 // If the new reply equals the last one sent to that chat, append a
@@ -887,4 +944,4 @@ function varyIfRepeat(text, lastReply, lang) {
   return text + ' ' + closer;
 }
 
-module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage };
+module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt };

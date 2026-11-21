@@ -12,8 +12,10 @@
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { execFile } = require('child_process');
 const pino = require('pino');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
 // Some hosts (sandboxes, corporate networks) route all egress through an
@@ -585,17 +587,94 @@ function findAgreedPrice(historyText) {
   return leads.findAgreedPrice(historyText);
 }
 
+// --- Customer media understanding (2026-11-21, Zaib) ---
+// A customer may send a picture or a voice note instead of words.
+// Download it, understand it with Gemini, and return the text the
+// bot should answer to. Never throws — on any failure it returns a
+// short instruction for the AI to ask the customer for details, so
+// the customer always gets a human reply, never silence.
+async function understandCustomerMedia(msg) {
+  const m = msg.message || {};
+  const imageMsg = m.imageMessage;
+  const videoMsg = m.videoMessage;
+  const audioMsg = m.audioMessage;
+  try {
+    if (imageMsg) {
+      const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+      const seen = await ai.describeCustomerImage(buf, imageMsg.mimetype, imageMsg.caption);
+      if (seen.ok) {
+        return `[Customer sent a photo. What the brain saw in it: ${seen.description}]${imageMsg.caption ? ` Customer wrote with it: "${imageMsg.caption}"` : ''}`;
+      }
+      return imageMsg.caption
+        ? imageMsg.caption
+        : '[Customer sent a photo, but the brain could not see it — ask warmly what the photo shows and what they need.]';
+    }
+    if (videoMsg) {
+      const frame = await extractVideoFrameFromMessage(msg);
+      if (frame) {
+        const seen = await ai.describeCustomerImage(frame, 'image/jpeg', videoMsg.caption);
+        if (seen.ok) {
+          return `[Customer sent a video. What the brain saw in it: ${seen.description}]${videoMsg.caption ? ` Customer wrote with it: "${videoMsg.caption}"` : ''}`;
+        }
+      }
+      return videoMsg.caption
+        ? videoMsg.caption
+        : '[Customer sent a video, but the brain could not see it — ask warmly what the video shows and what they need.]';
+    }
+    if (audioMsg) {
+      const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+      const heard = await ai.transcribeAudio(buf, audioMsg.mimetype);
+      if (heard.ok && heard.text) return heard.text;
+      return '[Customer sent a voice message that could not be heard — politely ask them to type it.]';
+    }
+  } catch (e) {
+    console.error('understandCustomerMedia failed:', e && e.message);
+  }
+  return null;
+}
+
+// One frame from a customer video: download to a temp file, ffmpeg
+// extracts the frame at 1s, temp files are removed. Returns a Buffer
+// or null (ffmpeg missing/unavailable on the host is an honest null,
+// never a fake frame).
+async function extractVideoFrameFromMessage(msg) {
+  let tmpVideo = null;
+  let tmpFrame = null;
+  try {
+    const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+    tmpVideo = path.join(os.tmpdir(), 'musa-in-' + Date.now() + '-' + Math.floor(Math.random() * 1e6) + '.mp4');
+    tmpFrame = path.join(os.tmpdir(), 'musa-frame-' + Date.now() + '-' + Math.floor(Math.random() * 1e6) + '.jpg');
+    fs.writeFileSync(tmpVideo, buf);
+    await new Promise((resolve, reject) => {
+      execFile('ffmpeg', ['-y', '-v', 'error', '-i', tmpVideo, '-ss', '1', '-frames:v', '1', '-q:v', '3', tmpFrame], { timeout: 30000 }, (err) => (err ? reject(err) : resolve()));
+    });
+    return fs.readFileSync(tmpFrame);
+  } catch (e) {
+    return null;
+  } finally {
+    try { if (tmpVideo) fs.unlinkSync(tmpVideo); } catch (_) {}
+    try { if (tmpFrame) fs.unlinkSync(tmpFrame); } catch (_) {}
+  }
+}
+
 async function handleIncoming(businessId, sock, msg) {
   if (!msg.message || msg.key.fromMe) return;
   const business = store.getBusiness(businessId);
   if (!business.linked) return;
   const fromJid = msg.key.remoteJid;
   if (!fromJid || fromJid.endsWith('@g.us')) return; // DMs only, never group messages
-  const text = msg.message.conversation
+  // Text first; a picture / video / voice note is understood with
+  // Gemini and becomes text the bot can answer to (2026-11-21, Zaib).
+  let text = msg.message.conversation
     || msg.message.extendedTextMessage?.text
     || msg.message.imageMessage?.caption
     || msg.message.videoMessage?.caption
     || '';
+  const hasMedia = !!(msg.message.imageMessage || msg.message.videoMessage || msg.message.audioMessage);
+  if (hasMedia) {
+    const understood = await understandCustomerMedia(msg);
+    if (understood) text = understood;
+  }
   if (!text.trim()) return;
 
   const key = `${businessId}:${fromJid}`;
@@ -612,8 +691,9 @@ async function handleIncoming(businessId, sock, msg) {
 
   // Send media first if the AI picked one, then the short text reply.
   // The media always goes WITH a written line about what it is —
-  // never a bare photo/video. The caption is the owner's caption when
-  // they wrote one, otherwise the AI's short intro for that file.
+  // never a bare photo/video. The caption is ALWAYS the AI's own short
+  // human line for that file — the owner's caption is written to teach
+  // the BRAIN, and must never be sent to the customer (2026-11-21).
   // Human-like: typing indicator + 3–8s wait BEFORE anything is sent.
   await sendHumanLike(sock, fromJid, reply.text, async () => {
     if (reply.mediaId) {
@@ -622,7 +702,7 @@ async function handleIncoming(businessId, sock, msg) {
         const filePath = path.join(store.DATA_DIR, 'uploads', businessId, media.filename);
         if (fs.existsSync(filePath)) {
           const buffer = fs.readFileSync(filePath);
-          const mediaCaption = media.caption || ai.mediaIntroText(media, ai.detectLanguage(text));
+          const mediaCaption = ai.mediaIntroText(media, ai.detectLanguage(text));
           if (media.kind === 'image') await sock.sendMessage(fromJid, { image: buffer, caption: mediaCaption });
           else if (media.kind === 'video') await sock.sendMessage(fromJid, { video: buffer, caption: mediaCaption });
           else if (media.kind === 'audio') await sock.sendMessage(fromJid, { audio: buffer, ptt: true });
