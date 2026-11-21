@@ -33,21 +33,70 @@ function looksLikeLead(text, business) {
 // --- Short, generic extraction from free text ---
 // Only the CUSTOMER's sentences are read — bot lines ("Bot: ...") are
 // stripped first, so the alert never quotes the bot back at the owner.
-const GREETING_PREFIX_RE = /^(salam|assalam[^,!.]*|aoa|hi|hello|hey|good (morning|afternoon|evening))[,!.]?\s*/i;
+// BLOCK-AWARE strip (2026-11-21, Zaib): a bot message can span several
+// lines ("Hello! Welcome...\n\nBataiye, aap kis tarah ki website...?"),
+// and only its FIRST line starts with "Bot:". A line-by-line filter
+// kept the second half as if the CUSTOMER said it — that is exactly how
+// the bot's own greeting became the "Wants" of the 2:58 PM lead. A line
+// belongs to the block started by the last "Bot:" / "Customer:" label.
+function stripBotBlocks(raw) {
+  const out = [];
+  let inBot = false;
+  for (const line of String(raw || '').split(/\n/)) {
+    if (/^\s*Bot\s*:/i.test(line)) { inBot = true; continue; }
+    if (/^\s*Customer\s*:/i.test(line)) { inBot = false; out.push(line.replace(/^\s*Customer\s*:\s*/i, '')); continue; }
+    if (!inBot) out.push(line);
+  }
+  return out.join('\n');
+}
+const GREETING_PREFIX_RE = /^(salam|assalam[^,!.]*|aoa|hi|hello|hey|hy|good (morning|afternoon|evening))[,!.]?\s*/i;
 const CONFIRM_SENTENCE_RE = /^(han|haan|ji|yes|ok|okay|sure|theek hai|done|final|confirm|book kar|karwa do|banwa do|zaroor|bilkul)\b/i;
-const NAME_SENTENCE_RE = /(mera naam|my name is|name is|\bnaam\b)/i;
+const NAME_SENTENCE_RE = /(mera naam|my name is|name is)/i;
 const ADDRESS_SENTENCE_RE = /(address|mera address|pata|my address|deliver (to|at)|ghar ka pata)/i;
 const PRICE_ONLY_RE = /^\W*(?:rs\.?|pkr|₨|rupees?)?\s*[\d,]{3,7}\s*(?:final|theek|done|ok)?\W*$/i;
 const WANT_WORDS_RE = /(chahiye|chahie|lena|karna|banwa|order|book|want|need)/i;
+// A "question to the customer" is not a want — "Bataiye, aap kis tarah
+// ki website..." asks THEM; it never describes what they want.
+const ASK_QUESTION_RE = /^(bataiye|batao|bata dein|batain|tell me|what|which|kis tarah|kaun|kab|kitne|kahan)\b/i;
 
+// The customer's OWN name only — "mera naam X hai" / "my name is X" /
+// "main X hun". A bare "naam" is NOT enough: "pizza restaurant jiska
+// naam hai HFC" is the RESTAURANT's name, and the old regex turned it
+// into the customer's name ("hai hfc theek", 06:13 AM lead, 2026-11-21).
+// Filler words can never be a name.
+const NAME_FILLER_RE = /^(hai|theek|kya|check|microphone|basic|ok|ji|haan|han|bhai|yar|yaar|aoa|salam)$/i;
 function extractCustomerName(raw) {
   const t = String(raw || '');
-  let m = t.match(/(?:mera naam|my name is|name is|naam)\s*:?\s*([A-Za-z][A-Za-z .]{1,40}?)(?:\s+hai\b|\s+he\b|\s+is\b|,|\.|$)/i);
-  if (m) return m[1].trim().replace(/[.,;]+$/, '');
+  let m = t.match(/(?:mera naam|my name is|name is)\s*:?\s*([A-Za-z][A-Za-z .]{1,40}?)(?:\s+hai\b|\s+he\b|\s+is\b|,|\.|$)/i);
+  if (m) {
+    const name = m[1].trim().replace(/[.,;]+$/, '');
+    if (name && !NAME_FILLER_RE.test(name) && !/\b(hai|theek|check|microphone)\b/i.test(name)) return name;
+  }
   // "main Ahmed Raza hun" / "I am Ahmed Raza"
   m = t.match(/(?:main|i am|i'm)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+(?:hun|hoon|hu|hai)\b/);
   if (m) return m[1].trim();
   return '';
+}
+
+// A phone number the customer TYPED in the chat (+92... / 03... / 92...).
+// Used when the chat's JID is a WhatsApp LID, not a phone number —
+// Baileys 6.7.24 has no remoteJidAlt, so the typed number is the only
+// way to get the real one.
+function extractPhoneNumber(raw) {
+  const t = String(raw || '');
+  const m = t.match(/(?:\+?92|0)?3\d{2}[\s-]?\d{7}\b|\+?\d{10,13}\b/);
+  if (!m) return '';
+  const digits = m[0].replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 13) return '';
+  return '+' + (digits.startsWith('92') ? digits : digits.startsWith('0') ? '92' + digits.slice(1) : digits);
+}
+
+// An email the customer TYPED in the chat. WhatsApp profiles have no
+// email field — the address can only come from the customer's own words.
+function extractEmail(raw) {
+  const t = String(raw || '');
+  const m = t.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+  return m ? m[0] : '';
 }
 
 function extractAddress(raw) {
@@ -95,13 +144,20 @@ function findAgreedPrice(historyText) {
 // address sentences are dropped; "mujhe X chahiye" / "X create karvani
 // hai" / "I want X" give X; anything else that looks like a request is
 // kept as-is (capped at 120 chars). At most 2 wants, joined with " + ".
+// (2026-11-21, Zaib): the bot's own greeting once became the "Wants",
+// and a mic-check became a lead — so a question ASKED to the customer,
+// a bracketed media note ("[Customer sent a photo...]"), a bare
+// greeting ("Hy") and a short fragment with no want word are all
+// skipped. The "mujhe X <verb>" match no longer needs the verb at the
+// END of the sentence — in a long voice-note message the verb sits
+// mid-sentence ("mujhe ... selling point create karwana hai jaisa ki...").
 function extractWants(raw) {
-  const lines = String(raw || '').split(/\n/)
-    .filter((l) => !/^\s*Bot\s*:/i.test(l))
-    .map((l) => l.replace(/^\s*Customer\s*:\s*/i, ''));
+  const lines = stripBotBlocks(raw).split(/\n/);
   const wants = [];
   const addWant = (w) => {
-    w = String(w || '').trim().replace(/^(ek|aik|a|an|one)\s+/i, '').replace(/[.,;!?]+$/, '').trim();
+    // Strip leading filler words voice notes are full of ("na", "to",
+    // "basically", "yar", "dekho") so the want starts at the real words.
+    w = String(w || '').trim().replace(/^(na|to|basically|yar|yaar|ham|bhai|dekho|ek|aik|a|an|one)\s+/i, '').replace(/^(na|to|basically|yar|yaar|ham|bhai|dekho)\s+/i, '').replace(/[.,;!?]+$/, '').trim();
     if (!w || w.length > 120) return;
     if (NAME_SENTENCE_RE.test(w) || ADDRESS_SENTENCE_RE.test(w) || PRICE_ONLY_RE.test(w)) return;
     if (wants.some((x) => x.toLowerCase().includes(w.toLowerCase()))) return;
@@ -111,19 +167,29 @@ function extractWants(raw) {
     wants.push(w);
   };
   for (const line of lines) {
-    for (let sentence of line.split(/(?<=[.!?])\s+/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // A bracketed note about media ("[Customer sent a photo...]") is
+    // not something the customer wants.
+    if (trimmed.startsWith('[')) continue;
+    for (let sentence of trimmed.split(/(?<=[.!?])\s+/)) {
       sentence = sentence.replace(GREETING_PREFIX_RE, '').trim();
       if (!sentence) continue;
+      if (ASK_QUESTION_RE.test(sentence)) continue;
       if (CONFIRM_SENTENCE_RE.test(sentence)) continue;
       if (NAME_SENTENCE_RE.test(sentence) && !WANT_WORDS_RE.test(sentence)) continue;
       if (ADDRESS_SENTENCE_RE.test(sentence) && !WANT_WORDS_RE.test(sentence)) continue;
       if (PRICE_ONLY_RE.test(sentence)) continue;
-      let m = sentence.match(/(?:mujhe|muje|i want|i need)\s+(.+?)\s+(?:chahiye|chahie|lena hai|karna hai|banwa do|banwani hai|create karvani hai|karwana hai|order karna hai|book karna hai)\s*$/i)
+      let m = sentence.match(/(?:mujhe|muje|i want|i need)\s+(.+?)\s+(?:chahiye|chahie|lena hai|karna hai|banwa do|banwani hai|banana hai|banani hai|create karvani hai|karwana hai|order karna hai|book karna hai)\b/i)
         || sentence.match(/(?:mujhe|muje|i want|i need)\s+(.+?)(?:\s+chahiye|\s+chahie|,|$)/i);
       if (m) { addWant(m[1]); continue; }
-      m = sentence.match(/^(.+?)\s+(?:create karvani hai|banwani hai|banwa do|karwana hai|karna hai|lena hai|order karna hai|book karna hai|chahiye|chahie)\b/i);
+      m = sentence.match(/^(.+?)\s+(?:create karvani hai|banwani hai|banana hai|banani hai|banwa do|karwana hai|karna hai|lena hai|order karna hai|book karna hai|chahiye|chahie)\b/i);
       if (m) { addWant(m[1]); continue; }
-      if (!NAME_SENTENCE_RE.test(sentence) && !ADDRESS_SENTENCE_RE.test(sentence)) addWant(sentence);
+      // A bare sentence is only a want if it actually asks for
+      // something or says enough to mean something — "Is tara ke"
+      // (a cut-off fragment) is neither.
+      if (!NAME_SENTENCE_RE.test(sentence) && !ADDRESS_SENTENCE_RE.test(sentence)
+        && (WANT_WORDS_RE.test(sentence) || sentence.length > 40)) addWant(sentence);
     }
     if (wants.length >= 2) break;
   }
@@ -133,18 +199,12 @@ function extractWants(raw) {
 // Only the CUSTOMER's words — the bot's own lines are stripped, so a
 // name/address is never "extracted" from a bot question like "Aap apna
 // naam aur address bata dein" (that bug once produced Name: "aur
-// address bata dein"). The agreed PRICE still reads the full text,
-// because the price is usually in the bot's "total Rs 1000" line.
-// Only the CUSTOMER's words — the bot's own lines are stripped, so a
-// name/address is never "extracted" from a bot question like "Aap apna
-// naam aur address bata dein" (that bug once produced Name: "aur
-// address bata dein"). The agreed PRICE still reads the full text,
-// because the price is usually in the bot's "total Rs 1000" line.
+// address bata dein"). Block-aware: a multi-line bot message is one
+// block, so its continuation lines never leak in as customer words.
+// The agreed PRICE still reads the full text, because the price is
+// usually in the bot's "total Rs 1000" line.
 function customerOnlyText(raw) {
-  return String(raw || '').split(/\n/)
-    .filter((l) => !/^\s*Bot\s*:/i.test(l))
-    .map((l) => l.replace(/^\s*Customer\s*:\s*/i, ''))
-    .join('\n');
+  return stripBotBlocks(raw);
 }
 
 // Best-effort extraction from free text, so name / address are not lost.
@@ -152,15 +212,35 @@ function customerOnlyText(raw) {
 // "mera address Lahore hai", "I want a website".
 // wants is the SHORT extracted want (never the full text — rawText keeps
 // the full conversation for the dashboard, but the alert never shows it).
-function parseLead(business, customerJid, text) {
+// opts (2026-11-21, Zaib): { displayName, isLid }.
+// - displayName is the customer's WhatsApp name (msg.pushName) — the
+//   NAME in the alert, unless the customer typed their own name.
+// - isLid means the chat's JID is a WhatsApp LID (a long numeric ID),
+//   not a phone number — Baileys 6.7.24 has no remoteJidAlt, so the
+//   digits must never be shown as a phone number. The real number is
+//   used only if the customer typed it in the chat.
+function parseLead(business, customerJid, text, opts) {
   const raw = String(text || '');
-  const number = (customerJid || '').replace(/@.*$/, '').replace(/^(\d+)/, '+$1');
+  const isLid = !!(opts && opts.isLid) || /@lid\s*$/.test(String(customerJid || ''));
+  const digits = (customerJid || '').replace(/@.*$/, '').replace(/\D/g, '');
   const customerText = customerOnlyText(raw);
+  const typedNumber = extractPhoneNumber(customerText);
+  let customerNumber = '+' + digits;
+  let numberIsLid = false;
+  if (isLid) {
+    if (typedNumber) customerNumber = typedNumber;
+    else { customerNumber = '+' + digits; numberIsLid = true; }
+  }
+  const customerName = (opts && opts.displayName ? String(opts.displayName).trim() : '')
+    || extractCustomerName(customerText);
   return {
     businessId: business.id,
     businessName: business.name || business.id,
-    customerNumber: number,
-    customerName: extractCustomerName(customerText),
+    customerNumber,
+    numberIsLid,
+    rawJid: String(customerJid || ''),
+    customerName,
+    email: extractEmail(customerText),
     address: extractAddress(customerText),
     wants: extractWants(customerText),
     price: findAgreedPrice(raw),
@@ -173,13 +253,20 @@ function parseLead(business, customerJid, text) {
 }
 
 // SHORT owner alert — the SAME text goes to email and WhatsApp. Only:
-// name, number, what they want, address (if given), agreed price.
+// name, number, what they want, address (if given), agreed price, and
+// the email the customer typed (if any — WhatsApp profiles have no
+// email field, so it only appears when the customer wrote it).
+// A LID number is never shown as a phone number: the alert says so
+// plainly, so the owner asks the customer for their real number.
 // No full conversation, no middle deal details, no timestamps.
 function leadText(business, lead) {
   const lines = [`New lead — ${lead.businessName}`];
   lines.push(`Name: ${lead.customerName || '—'}`);
-  lines.push(`Number: ${lead.customerNumber}`);
+  if (lead.numberIsLid && !lead.customerNumber) lines.push('Number: (WhatsApp ID only — ask the customer for their number)');
+  else if (lead.numberIsLid) lines.push(`Number: ${lead.customerNumber} (WhatsApp ID — confirm the real number with the customer)`);
+  else lines.push(`Number: ${lead.customerNumber}`);
   lines.push(`Wants: ${lead.wants || '—'}`);
+  if (lead.email) lines.push(`Email: ${lead.email}`);
   if (lead.address) lines.push(`Address: ${lead.address}`);
   if (lead.price) lines.push(`Price: ${lead.price}`);
   return lines.join('\n');
@@ -222,8 +309,23 @@ async function forwardLead(business, lead, sendFn) {
   return { email, whatsapp: wa, log, forwardedEmail: !!email.ok, forwardedWhatsapp: !!wa.ok };
 }
 
-async function captureAndForward(business, customerJid, text, sendFn) {
-  const lead = store.addLead(parseLead(business, customerJid, text));
+async function captureAndForward(business, customerJid, text, sendFn, opts) {
+  const lead = parseLead(business, customerJid, text, opts);
+  // No duplicate alerts (2026-11-21, Zaib): one customer produced 7
+  // alerts in one day because every message re-captured the same lead.
+  // If the same customer already has a lead from the last 6 hours with
+  // the same wants + price (or the new one has no wants at all), the
+  // owner already knows — save nothing, send nothing.
+  const prev = (store.listLeads(business.id) || [])
+    .filter((l) => l.customerNumber === lead.customerNumber)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+  if (prev && Date.now() - new Date(prev.createdAt).getTime() < 6 * 60 * 60 * 1000) {
+    const sameDetails = prev.wants === lead.wants && prev.price === lead.price;
+    if (!lead.wants || sameDetails) {
+      return { lead: prev, skipped: true, reason: 'duplicate lead — same customer, same details, already alerted' };
+    }
+  }
+  store.addLead(lead); // assigns id + createdAt on `lead` itself
   const result = await forwardLead(business, lead, sendFn);
   store.updateLead(business.id, lead.id, {
     forwardedEmail: result.forwardedEmail,
@@ -248,4 +350,4 @@ async function confirmLead(business, leadId, sendFn) {
   return { lead: updated, email: result.email, whatsapp: result.whatsapp };
 }
 
-module.exports = { looksLikeLead, parseLead, captureAndForward, confirmLead, forwardLead, sendLeadEmail, sendLeadWhatsapp, findAgreedPrice, extractWants, extractCustomerName, extractAddress, leadText };
+module.exports = { looksLikeLead, parseLead, captureAndForward, confirmLead, forwardLead, sendLeadEmail, sendLeadWhatsapp, findAgreedPrice, extractWants, extractCustomerName, extractAddress, extractPhoneNumber, extractEmail, customerOnlyText, leadText };

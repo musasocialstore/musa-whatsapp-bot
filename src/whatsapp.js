@@ -572,7 +572,12 @@ const TEAM_LINES = {
 };
 function teamLineFor(lang) { return TEAM_LINES[lang] || TEAM_LINES.en; }
 function isConfirmedOrder(customerText, replyText, history) {
-  if (CONFIRMED_RE.test(String(customerText || '')) || TEAM_LINE_RE.test(String(replyText || ''))) return true;
+  // ONLY the customer's own words count as a confirmation. The bot's
+  // reply is never evidence — the old code also fired when the reply
+  // contained the team line, and the bot says team-ish things in
+  // greetings too, so one customer got 7 lead alerts in a day
+  // (2026-11-21, Zaib).
+  if (CONFIRMED_RE.test(String(customerText || ''))) return true;
   const t = String(customerText || '').trim();
   if (SHORT_AFFIRM_RE.test(t) && t.split(/\s+/).length <= 3) {
     const h = (history || []).map((x) => x.text).join('\n');
@@ -663,6 +668,11 @@ async function handleIncoming(businessId, sock, msg) {
   if (!business.linked) return;
   const fromJid = msg.key.remoteJid;
   if (!fromJid || fromJid.endsWith('@g.us')) return; // DMs only, never group messages
+  // The customer's WhatsApp name + whether the chat is LID-addressed
+  // (2026-11-21, Zaib): a LID is a long numeric ID, not a phone number
+  // — the lead must show the real name and never a fake number.
+  const displayName = msg.pushName || '';
+  const isLid = !!(fromJid && fromJid.endsWith('@lid'));
   // Text first; a picture / video / voice note is understood with
   // Gemini and becomes text the bot can answer to (2026-11-21, Zaib).
   let text = msg.message.conversation
@@ -776,9 +786,9 @@ async function handleIncoming(businessId, sock, msg) {
       try { await sendText(businessId, fromJid, teamLineFor(ai.detectLanguage(text))); } catch (e) { console.error('team line send failed:', e && e.message); }
     }
     const historyText = history.map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${h.text}`).join('\n');
-    await leads.captureAndForward(business, fromJid, historyText, (bid, jid, t) => sendText(bid, jid, t));
+    await leads.captureAndForward(business, fromJid, historyText, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid });
   } else if (leads.looksLikeLead(text, business)) {
-    await leads.captureAndForward(business, fromJid, text, (bid, jid, t) => sendText(bid, jid, t));
+    await leads.captureAndForward(business, fromJid, text, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid });
   }
 }
 
