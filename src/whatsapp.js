@@ -711,6 +711,13 @@ async function handleIncoming(businessId, sock, msg) {
   // (2026-11-21: the AI wrote one into its text and the customer only
   // saw the name, not the picture). The real picture is attached above.
   reply.text = ai.stripMediaRefs(reply.text);
+  // A design was asked for but no preview could be made — never let a
+  // refusal ("mere paas direct picture bhejne ka option nahi hai" /
+  // "I can't send a picture") reach the customer (2026-11-22, 00:03
+  // PKT chat). The team line below is the honest answer instead.
+  if (imageRequest && !(generatedImage && generatedImage.ok)) {
+    reply.text = ai.stripPictureRefusal(reply.text);
+  }
   // Safety net: a design was asked for but no preview could be made —
   // the customer still gets a clear promise that the team will share it.
   if (imageRequest && !(generatedImage && generatedImage.ok) && !/design|team will share|team.*share/i.test(reply.text)) {

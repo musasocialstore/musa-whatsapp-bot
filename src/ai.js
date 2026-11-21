@@ -627,7 +627,7 @@ async function generateReply(business, customerText, history, opts) {
   const imageNote = opts && opts.imageRequest
     ? (opts.imageReady
       ? 'A design preview image has been made for this customer and WILL be attached to this reply — tell them in your own words that this is how it will look, and that the team will confirm the final design with them.'
-      : 'The customer asked to see a design, but no preview image could be made right now — do NOT promise a picture. Say the team will share the design with them soon and confirm the final design.')
+      : 'The customer asked to see a design, but no preview image could be made right now — do NOT promise a picture. NEVER say you cannot send a picture, that you have no option to send pictures, or that sending pictures is not possible here — never write "I can\'t", "mere paas option nahi hai", or anything like that. Just say the team will share the design with them soon and confirm the final design.')
     : '';
   if (!isAiConfigured()) {
     // No Gemini key: answer from the business facts (see
@@ -1010,7 +1010,15 @@ function learnedQaSection(business) {
 // Honest failure: no key / model unavailable / timeout → {ok:false}
 // and the bot says the team will share the design — it never promises
 // a picture it cannot make.
-const IMAGE_MODELS = ['gemini-2.5-flash-image', 'gemini-2.0-flash-preview-image-generation'];
+// Image models, tried in order. Live evidence (Railway logs, 2026-11-22
+// 00:01 + 00:02 PKT): gemini-2.5-flash-image answers 429 when its free
+// quota is out (the model EXISTS); gemini-2.0-flash-preview-image-
+// generation answers 404 "not found for API version v1beta" — that
+// model is DEAD, so it was removed. Its replacements are the current GA
+// image models (Google docs, Oct 2026): gemini-3.1-flash-image (Nano
+// Banana 2) and gemini-3-pro-image (Nano Banana Pro). Each model has
+// its own quota, so a 429 on one does not block the next.
+const IMAGE_MODELS = ['gemini-2.5-flash-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image'];
 const IMAGE_REQUEST_RE = /(design|ui|user interface|mockup|mock-up|layout|dikha|dikhao|dekha|dekhna|show me|show it|picture|photo|image|tasveer|kaisa (lagega|hoga|dikhega)|kesi (lagegi|hogi)|sample|preview|prototype)/i;
 function detectImageRequest(text) {
   const t = String(text || '').trim();
@@ -1057,11 +1065,13 @@ async function generateCustomerImage(business, customerText, history) {
         const errText = await res.text().catch(() => '');
         console.error('Image generation failed:', model, res.status, errText.slice(0, 200));
         // 404/400 = this model is not available for this key; 429/503
-        // = quota or overload — the NEXT model may have its own quota,
-        // so try it before giving up. (2026-11-21: the first request
-        // died on a 429 "quota exceeded" and the fallback was never
-        // tried, so the customer got no picture at all.)
-        if ([404, 400, 429, 503].includes(res.status)) { lastReason = 'api-' + res.status; continue; }
+        // = quota or overload; 403 = this model needs billing on this
+        // key — the NEXT model may have its own quota, so try it
+        // before giving up. (2026-11-21: the first request died on a
+        // 429 "quota exceeded" and the fallback was never tried, so
+        // the customer got no picture at all. 2026-11-22 00:01 PKT:
+        // the 429 WAS retried, but the fallback model itself 404d.)
+        if ([404, 400, 403, 429, 503].includes(res.status)) { lastReason = 'api-' + res.status; continue; }
         return { ok: false, reason: 'api-' + res.status };
       }
       const data = await res.json();
@@ -1100,4 +1110,21 @@ function stripMediaRefs(text) {
     .trim();
 }
 
-module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs, learnFromCustomer, learnedQaSection, detectImageRequest, buildImagePrompt, generateCustomerImage, designCaption };
+// A design was asked for but no preview could be made (2026-11-22,
+// 00:03 PKT chat with Zaib JUTT Gondal): the AI still wrote a refusal —
+// "Bhai filhal mere paas yahan direct picture bhejne ka option nahi
+// hai" — which is rude and false (the bot CAN send pictures; the
+// preview just failed). Drop any sentence that refuses to send a
+// picture/design; the team line is added by the caller afterwards.
+function stripPictureRefusal(text) {
+  const aboutPicture = /(picture|photo|image|tasveer|design|preview)/i;
+  const refusal = /(option nahi|nahi sakta|nahi sakti|can't|cannot|can not|not possible|no option|not able|don't have.*option|do not have.*option)/i;
+  return String(text || '')
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => !(aboutPicture.test(s) && refusal.test(s)))
+    .join(' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs, stripPictureRefusal, learnFromCustomer, learnedQaSection, detectImageRequest, buildImagePrompt, generateCustomerImage, designCaption };
