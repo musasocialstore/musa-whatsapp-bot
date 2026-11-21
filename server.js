@@ -186,6 +186,14 @@ app.post('/api/business/:id/media', (req, res, next) => {
     // bhejna". Required in Brain Chat, optional on the Media page. The
     // brain analyses the picture TOGETHER with these words.
     ownerNote: String(req.body.ownerNote || req.body.caption || ''),
+    // purpose (2026-11-21, Zaib): 'knowledge' = brain-only, NEVER sent
+    // to a customer — the brain learns from it and answers FROM it.
+    // 'customer' = the brain may send it to a customer when it fits.
+    // Default is knowledge: sending the wrong picture to a customer is
+    // the reported bug (a knowledge poster was sent back to the
+    // customer as "our plans"); the owner flips a file to 'customer'
+    // on the Media page or in Brain Chat.
+    purpose: req.body.purpose === 'customer' ? 'customer' : 'knowledge',
     url: `/media/${encodeURIComponent(id)}/${encodeURIComponent(req.file.filename)}`,
     createdAt: new Date().toISOString(),
   };
@@ -210,6 +218,20 @@ app.delete('/api/business/:id/media/:mediaId', (req, res) => {
   business.media = (business.media || []).filter((m) => m.id !== req.params.mediaId);
   store.saveBusiness(business);
   res.json({ ok: true, media: business.media });
+});
+
+// Flip one file's purpose: knowledge (brain-only, never sent) or
+// customer (the brain may send it when it fits).
+app.post('/api/business/:id/media/:mediaId/purpose', (req, res) => {
+  const id = businessId(req);
+  const business = store.getBusiness(id);
+  const item = (business.media || []).find((m) => m.id === req.params.mediaId);
+  if (!item) return res.status(404).json({ error: 'Media not found' });
+  const purpose = String((req.body || {}).purpose || '');
+  if (purpose !== 'knowledge' && purpose !== 'customer') return res.status(400).json({ error: 'purpose must be knowledge or customer' });
+  item.purpose = purpose;
+  store.saveBusiness(business);
+  res.json({ media: item });
 });
 
 // --- 2. Brain Chat: the owner teaches the brain in plain words ---
@@ -369,10 +391,15 @@ app.post('/api/business/:id/media/:mediaId/describe', async (req, res) => {
     item.description = result.description;
     item.analyzedAt = new Date().toISOString();
     // The brain remembers what it saw, so Brain Chat can use it too.
+    // A knowledge file is remembered as knowledge-only — the brain
+    // must never promise to send it (see purpose, 2026-11-21).
     business.brainMemory = business.brainMemory || [];
+    const sendLine = item.purpose === 'customer'
+      ? `I will send it when a customer asks about ${item.useFor || item.ownerNote || item.caption || 'something matching it'}.`
+      : 'This file is for my own knowledge only — I will never send it to a customer, I will only answer from what I learned in it.';
     business.brainMemory.push({
       role: 'brain',
-      text: `I analysed your ${item.kind} "${item.originalName}"${ownerNote ? ` (you said: "${ownerNote}")` : ''}: ${result.description} I will send it when a customer asks about ${item.useFor || item.ownerNote || item.caption || 'something matching it'}.`,
+      text: `I analysed your ${item.kind} "${item.originalName}"${ownerNote ? ` (you said: "${ownerNote}")` : ''}: ${result.description} ${sendLine}`,
       at: new Date().toISOString(),
     });
     store.saveBusiness(business);
