@@ -127,19 +127,21 @@ function showView(which) {
 function showBulkWizard() { showView('wizard'); }
 function showBulkCampaigns() { showView('campaigns'); }
 
-// --- Make drafts: AUTO-ADVANCE walkthrough, one chat at a time --------
+// --- Make drafts: AUTO-ADVANCE, one chat at a time, NO per-chat buttons
 // What a WhatsApp draft is: the message typed in the chat, NOT sent —
 // the chat list then shows "Draft: Hi". The server CANNOT type into the
-// chat box on the owner's phone by itself, so making a draft means
-// opening that chat once on the phone. This view does exactly that,
-// automatically, and ONLY here — never on Start Campaign (a draft
+// chat box on the owner's phone by itself — WhatsApp gives a linked
+// device no draft function at all — so making a draft means opening
+// that chat once on the phone. One tap on "Make drafts" runs the whole
+// thing by itself, and ONLY here — never on Start Campaign (a draft
 // Start just saves on the board). Tap "Make drafts" → chat 1 opens
 // right away with the message typed, NOT sent → the owner presses
 // back → the next chat opens by itself ~1s later → repeat until all
-// chats are done, within seconds. Manual [Next chat] is the fallback
-// if the auto-advance ever misses a step; [Done] / leaving the view
-// disarms it, so a later return to this tab never opens a chat out
-// of nowhere.
+// chats are done, within seconds. There is NO per-chat view and NO
+// per-chat button (2026-11-21, Zaib): the campaigns list stays
+// visible, progress is a short toast, and the card's button becomes
+// "Stop drafts" while it runs. To stop, tap "Stop drafts" or just
+// don't press back — staying in WhatsApp ends the run.
 // How it works: opening a chat is a top-level navigation
 // (location.href), never a popup — it can never be blocked. When the
 // owner presses back from WhatsApp, this page becomes visible again
@@ -207,8 +209,9 @@ async function startMakeDrafts(campaignId) {
     makeDrafts = { campaign, idx: 0, armed: false, leftAt: 0 };
     makeDraftsSave();
     renderMakeDrafts();
-    showView('makedrafts');
     // Open the FIRST chat right away — this runs on the "Make drafts" tap.
+    // No per-chat view opens: the campaigns list stays visible and the
+    // walkthrough runs by itself from here (see renderMakeDrafts).
     makeDraftsOpenCurrent();
   } catch (e) {
     toast('Could not open drafts: ' + e.message);
@@ -234,6 +237,19 @@ function renderMakeDrafts() {
   if (hint) hint.textContent = makeDrafts.idx + 1 < total
     ? 'Chat opens with the message typed, not sent. Press back — the next chat opens by itself, and the typed text stays as a draft.'
     : 'Last chat — press back and you are done, all drafts are in WhatsApp.';
+  // No per-chat view: progress is a short toast and the campaigns list
+  // stays visible, with the card's button flipped to "Stop drafts".
+  toast('Draft ' + (makeDrafts.idx + 1) + ' of ' + total + ' — back dabao, agla chat khud khulega.');
+  loadBulkCampaigns();
+}
+
+function stopMakeDrafts() {
+  // The owner stops the walkthrough from the campaign card — disarm it
+  // so no chat opens on the next return to this tab.
+  makeDraftsDisarm();
+  makeDrafts = null;
+  loadBulkCampaigns();
+  toast('Drafts stopped.');
 }
 
 function makeDraftsCurrentLink() {
@@ -291,11 +307,10 @@ function makeDraftsNext() {
 // The owner pressed back from WhatsApp: this page is visible again.
 // Advance automatically — but only if we actually left for a moment
 // (an instant bounce means the chat never opened, so don't skip it),
-// only while the walkthrough view is showing, and only while armed.
+// and only while armed. There is no per-chat view any more (2026-11-21):
+// the campaigns list stays visible and the walkthrough just runs.
 function makeDraftsOnReturn() {
   if (!makeDrafts || !makeDrafts.armed) return;
-  const viewEl = document.getElementById('makeDraftsView');
-  if (!viewEl || viewEl.style.display === 'none') return;
   const awayMs = makeDrafts.leftAt ? Date.now() - makeDrafts.leftAt : 0;
   if (awayMs < 1200) return; // bounced back instantly — chat never opened
   makeDraftsScheduleNext();
@@ -337,7 +352,6 @@ async function makeDraftsResumeAfterReload() {
     if (!campaign || !(campaign.numbers || []).length) { makeDraftsClearStored(); return; }
     makeDrafts = { campaign, idx: Math.min(stored.idx, campaign.numbers.length - 1), armed: true, leftAt: stored.leftAt };
     renderMakeDrafts();
-    showView('makedrafts');
     // This reload IS the return from WhatsApp — open the next chat ~1s later.
     makeDraftsScheduleNext();
   } catch (e) { makeDraftsClearStored(); }
@@ -454,7 +468,7 @@ function renderBulkCampaigns(list) {
       <p>${esc((c.message || '').slice(0, 160))}${(c.message || '').length > 160 ? '…' : ''}</p>
       <p class="meta">Sent: ${c.sentCount || 0} · Failed: ${c.failedCount || 0} · Total: ${total} · ${esc(c.createdAt || '')}</p>
       <ul>${rows}</ul>
-      ${c.status === 'running' ? `<button class="small danger" onclick="stopBulkCampaign('${esc(c.id)}')">Stop</button>` : c.status === 'paused' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Continue</button>` : c.type === 'draft' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Send all now</button> <button class="small secondary" onclick="startMakeDrafts('${esc(c.id)}')">Make drafts</button>` : c.type === 'send' && c.status === 'ready' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Start now</button>` : ''}
+      ${c.status === 'running' ? `<button class="small danger" onclick="stopBulkCampaign('${esc(c.id)}')">Stop</button>` : c.status === 'paused' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Continue</button>` : c.type === 'draft' ? (makeDrafts && makeDrafts.armed && makeDrafts.campaign && makeDrafts.campaign.id === c.id ? `<button class="small danger" onclick="stopMakeDrafts()">Stop drafts</button>` : `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Send all now</button> <button class="small secondary" onclick="startMakeDrafts('${esc(c.id)}')">Make drafts</button>`) : c.type === 'send' && c.status === 'ready' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Start now</button>` : ''}
     </div>`;
   }).join('');
 }
