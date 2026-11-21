@@ -387,6 +387,15 @@ function showNewUserHint() {
 
 // --- Page init: Business ID carries across pages, no login ---
 document.addEventListener('DOMContentLoaded', () => {
+  // Brand mark (2026-11-21, Zaib): the doll logo next to the brand name
+  // in the top bar, on every page — the reference design has a logo
+  // mark in the header.
+  const brand = document.querySelector('.brand-name');
+  if (brand && !brand.querySelector('.brand-logo')) {
+    const img = document.createElement('img');
+    img.src = '/logo-doll.webp'; img.alt = ''; img.className = 'brand-logo';
+    brand.prepend(img);
+  }
   // Burger drawer wiring (UI v3) — closes on item tap, outside tap, or X.
   const burger = $('burgerBtn');
   if (burger) burger.addEventListener('click', toggleDrawer);
