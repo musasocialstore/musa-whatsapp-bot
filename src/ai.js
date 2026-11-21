@@ -577,6 +577,10 @@ function buildSystemPrompt(business, media) {
     summary ? `What the owner's saved prompt says (your facts):\n${summary}` : 'No saved business prompt yet — use the brain facts below instead.',
     `What the brain knows about this business (from everything the owner taught it):\n${brainSummary}`,
     brainMem ? `What the owner taught the brain, most recent first:\n${brainMem}` : '',
+    // Learned from real customer chats (2026-11-21): questions customers
+    // actually asked + the answers the brain gave — the brain re-uses
+    // them instead of guessing again. Personal data is never learned.
+    learnedQaSection(business) ? `What customers often ask — learned from real chats with customers (use these answers when the same question comes again):\n${learnedQaSection(business)}` : '',
     `The owner's full prompt, in their own words (it may be in Roman Urdu, Urdu, English, or mixed — read it all): ${business.prompt || '(no prompt set yet — use the brain facts above)'}`,
     'How to talk — like a friendly human:',
     '- 1 to 3 short sentences, warm and natural. Vary your wording every time — never start every reply with the same greeting, never send the same canned message twice in a row, never use stiff template lines like "Thank you for your message. Please tell me what you need."',
@@ -608,10 +612,18 @@ function buildSystemPrompt(business, media) {
 // at all). The conversation history is plain text inside the prompt,
 // not a chat-session object, so there is only one Gemini call shape
 // to keep working.
-async function generateReply(business, customerText, history) {
+async function generateReply(business, customerText, history, opts) {
   const media = (business && business.media) || [];
   const picked = pickMedia(media, customerText);
   const lang = detectLanguage(customerText);
+  // Design preview (2026-11-21): the reply's words must match what
+  // actually happens — a picture is attached only when one was really
+  // made; otherwise the bot says the team will share the design.
+  const imageNote = opts && opts.imageRequest
+    ? (opts.imageReady
+      ? 'A design preview image has been made for this customer and WILL be attached to this reply — tell them in your own words that this is how it will look, and that the team will confirm the final design with them.'
+      : 'The customer asked to see a design, but no preview image could be made right now — do NOT promise a picture. Say the team will share the design with them soon and confirm the final design.')
+    : '';
   if (!isAiConfigured()) {
     // No Gemini key: answer from the business facts (see
     // fallbackReply) — never the same generic sentence, never a
@@ -625,9 +637,10 @@ async function generateReply(business, customerText, history) {
       .map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${h.text}`).join('\n');
     const promptText = [
       buildSystemPrompt(business, media),
+      imageNote,
       convo ? `Conversation so far:\n${convo}` : 'This is the start of the conversation.',
       `Customer just said: ${customerText}\nReply as the business:`,
-    ].join('\n\n');
+    ].filter(Boolean).join('\n\n');
     const result = await generateContentResilient([{ text: promptText }]);
     let text = result.response.text().trim();
     if (!text) throw new Error('Gemini returned an empty reply');
@@ -945,6 +958,120 @@ function varyIfRepeat(text, lastReply, lang) {
   return text + ' ' + closer;
 }
 
+// --- Learning from customers (2026-11-21, Zaib) ---
+// While the bot talks to customers it LEARNS: every customer question
+// + the bot's answer is remembered per business (business.learnedQA),
+// so the brain gets smarter from real chats — the next customer who
+// asks the same thing gets the answer the brain already knows works.
+// Greetings, one-word replies and anything carrying a long digit run
+// (a phone number / CNIC / address) are NEVER learned — those are
+// personal, not knowledge. Capped at 50 entries, most-asked first.
+const LEARNED_QA_MAX = 50;
+const GREETING_RE = /^(hi+|hello+|hey+|salam+|assalam+|aoa+|ok+|okay+|thanks?|thank you|shukriya+|bye+|good\s*(morning|evening|afternoon)?)\b/i;
+function normalizeLearnedQ(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9\u0600-\u06FF\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function learnFromCustomer(business, customerText, botReply) {
+  if (!business) return null;
+  const q = normalizeLearnedQ(customerText);
+  const a = String(botReply || '').trim().slice(0, 300);
+  if (q.length < 5 || !a) return null;
+  if (GREETING_RE.test(q)) return null;
+  if (/\d{10,}/.test(q)) return null; // phone / CNIC / long number — personal
+  business.learnedQA = Array.isArray(business.learnedQA) ? business.learnedQA : [];
+  const found = business.learnedQA.find((e) => e.q === q);
+  if (found) { found.count = (found.count || 1) + 1; found.a = a; found.lastAt = new Date().toISOString(); }
+  else business.learnedQA.push({ q, a, count: 1, lastAt: new Date().toISOString() });
+  business.learnedQA.sort((x, y) => (y.count || 1) - (x.count || 1) || String(y.lastAt || '').localeCompare(String(x.lastAt || '')));
+  if (business.learnedQA.length > LEARNED_QA_MAX) business.learnedQA.length = LEARNED_QA_MAX;
+  return found || business.learnedQA[business.learnedQA.length - 1];
+}
+function learnedQaSection(business) {
+  const list = (business && business.learnedQA) || [];
+  if (!list.length) return '';
+  return list.slice(0, 5).map((e) => `Q: ${e.q}\nA (what the brain said): ${e.a}`).join('\n');
+}
+
+// --- Customer image generation via Gemini (2026-11-21, Zaib) ---
+// When a customer asks to SEE a design / UI / picture ("design dikhao",
+// "UI dikhao", "kaisa lagega"), the bot generates a preview image with
+// Gemini and sends the REAL picture — never a file name. The owner may
+// have explained only 1%: the image prompt is built from the whole
+// business understanding (name, category, services, deals, prices) +
+// what the customer asked for, so the preview matches the deal.
+// Honest failure: no key / model unavailable / timeout → {ok:false}
+// and the bot says the team will share the design — it never promises
+// a picture it cannot make.
+const IMAGE_MODELS = ['gemini-2.5-flash-image', 'gemini-2.0-flash-preview-image-generation'];
+const IMAGE_REQUEST_RE = /(design|ui|user interface|mockup|mock-up|layout|dikha|dikhao|dekha|dekhna|show me|show it|picture|photo|image|tasveer|kaisa (lagega|hoga|dikhega)|kesi (lagegi|hogi)|sample|preview|prototype)/i;
+function detectImageRequest(text) {
+  const t = String(text || '').trim();
+  if (t.length < 3) return false;
+  return IMAGE_REQUEST_RE.test(t);
+}
+function buildImagePrompt(business, customerText, history) {
+  const s = distillBrainSummary(business);
+  const bits = [];
+  if (s.name) bits.push(`business "${s.name}"`);
+  if (s.category) bits.push(`(${s.category})`);
+  if (s.services && s.services.length) bits.push(`offering ${s.services.slice(0, 4).join(', ')}`);
+  if (s.deals && s.deals.length) bits.push(`deals: ${s.deals.slice(0, 3).join('; ')}`);
+  const convo = (history || []).slice(-6).map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${String(h.text || '').slice(0, 200)}`).join(' | ');
+  const want = String(customerText || '').slice(0, 300);
+  const isWebsite = /website|web|site|e-?commerce|restaurant|store|shop/i.test((s.category || '') + ' ' + (s.services || []).join(' ') + ' ' + want);
+  const subject = isWebsite
+    ? 'a modern, clean, professional website homepage UI design mockup'
+    : 'a clean, professional product / service image for this business';
+  return `Create ${subject} for ${bits.join(' ') || 'this business'}. Customer asked: "${want}". ${convo ? `Conversation so far: ${convo}. ` : ''}High quality, realistic, professional, mobile-friendly layout, soft pleasant colors, no spelling mistakes in any text on the image.`;
+}
+async function generateCustomerImage(business, customerText, history) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key || key === 'YOUR_GEMINI_API_KEY_HERE') return { ok: false, reason: 'no-key' };
+  const imagePrompt = buildImagePrompt(business, customerText, history);
+  for (const model of IMAGE_MODELS) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 45000);
+      let res;
+      try {
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: imagePrompt }] }],
+            generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+          }),
+          signal: ctrl.signal,
+        });
+      } finally { clearTimeout(timer); }
+      if (!res.ok) {
+        // 404/400 = this model is not available for this key — try the next one.
+        if (res.status === 404 || res.status === 400) continue;
+        const errText = await res.text().catch(() => '');
+        console.error('Image generation failed:', model, res.status, errText.slice(0, 200));
+        return { ok: false, reason: 'api-' + res.status };
+      }
+      const data = await res.json();
+      const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+      const img = parts.find((p) => p.inlineData && /^image\//.test(p.inlineData.mimeType || ''));
+      if (!img) return { ok: false, reason: 'no-image-in-response' };
+      return { ok: true, buffer: Buffer.from(img.inlineData.data, 'base64'), mimeType: img.inlineData.mimeType || 'image/png', prompt: imagePrompt };
+    } catch (e) {
+      if (e && e.name === 'AbortError') return { ok: false, reason: 'timeout' };
+      console.error('Image generation error:', model, e && e.message);
+      return { ok: false, reason: 'error' };
+    }
+  }
+  return { ok: false, reason: 'model-unavailable' };
+}
+function designCaption(lang) {
+  const lines = {
+    en: 'Here is a preview of how it will look — the team will confirm the final design with you.',
+    ur: 'Ye preview hai — is tarah ka design hoga, final design team aap se confirm karke batayegi.',
+  };
+  return lines[lang] || lines.ur;
+}
+
 // Defensive strip (2026-11-21, Zaib): the AI once wrote the file name
 // "[image: file_00000000c2fc82118906104723582845.png]" into its reply
 // text, and the customer only saw the useless name, not the picture.
@@ -960,4 +1087,4 @@ function stripMediaRefs(text) {
     .trim();
 }
 
-module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs };
+module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs, learnFromCustomer, learnedQaSection, detectImageRequest, buildImagePrompt, generateCustomerImage, designCaption };
