@@ -268,9 +268,15 @@ async function sendBrainMedia() {
 async function uploadBrainMedia(file, caption) {
   if (!file) return;
   const note = String(caption || '').trim();
+  // Purpose (2026-11-21): knowledge = brain-only, never sent to a
+  // customer; customer = the brain may send it when it fits. The
+  // radios default to knowledge.
+  const purposeEl = document.querySelector('input[name="brainFilePurpose"]:checked');
+  const purpose = purposeEl && purposeEl.value === 'customer' ? 'customer' : 'knowledge';
   toast('Uploading ' + file.name + '…');
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('purpose', purpose);
   // The owner's message goes with the file: caption (what it is),
   // ownerNote (what it is for) and useFor (when to send it) — the
   // brain uses all three, and describe analyses picture + words.

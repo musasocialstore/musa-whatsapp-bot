@@ -7,7 +7,6 @@
 
 const $ = (id) => document.getElementById(id);
 const has = (id) => !!$(id);
-const DEFAULT_BUSINESS_ID = 'musa-social-store';
 let statusTimer = null;
 let countdownTimer = null;
 let countdownEndsAt = 0;
@@ -52,12 +51,14 @@ function addRipple(e) {
 function businessId() {
   const el = $('businessId');
   const typed = el ? (el.value || '').trim() : '';
-  // BUG FIX (2026-11-20, Zaib screenshot "Error: Request failed: 404"):
-  // when the Business ID box was empty, getCode/refreshStatus built
-  // "/api/business//pairing-code" (empty segment) and Express answered 404,
-  // so no pairing code ever appeared. Default to musa-social-store so the
-  // button works even if the user never types a Business ID.
-  return typed || (localStorage.getItem('musa-business-id') || '') || DEFAULT_BUSINESS_ID;
+  // NO default (2026-11-21, Zaib): a new user on a new phone must get
+  // an EMPTY board — their own Business ID, their own empty brain.
+  // The old default ('musa-social-store') made every new visitor see
+  // Zaib's business data. Returning '' here makes api() throw its
+  // clear "enter your Business ID first" error instead of loading
+  // someone else's data. Saved IDs still carry across pages via
+  // localStorage (setBusinessId), so existing users are unaffected.
+  return typed || (localStorage.getItem('musa-business-id') || '');
 }
 function setBusinessId(id) {
   const el = $('businessId');
@@ -240,12 +241,16 @@ function renderMedia(list) {
       : m.kind === 'video' ? `<video src="${esc(m.url)}" controls></video>`
       : `<audio src="${esc(m.url)}" controls></audio>`;
     return `<div class="media-item"><b>${esc(m.originalName)}</b> <span class="badge new">${esc(m.kind)}</span>
+      <span class="badge ${m.purpose === 'customer' ? 'linked' : 'waiting'}">${m.purpose === 'customer' ? 'Customer file' : 'Brain knowledge'}</span>
       ${preview}
       ${m.caption ? `<p>Caption: ${esc(m.caption)}</p>` : ''}
       ${m.ownerNote ? `<p>For: ${esc(m.ownerNote)}</p>` : ''}
       <p class="muted">Send this when the customer asks about: <b>${esc(m.useFor || '—')}</b></p>
       ${m.description ? `<p class="muted">AI saw: ${esc(m.description)}</p>` : ''}
       <button class="small secondary" onclick="describeMedia('${esc(m.id)}')">Describe</button>
+      ${m.purpose === 'customer'
+        ? `<button class="small secondary" onclick="setMediaPurpose('${esc(m.id)}', 'knowledge')">Make knowledge-only</button>`
+        : `<button class="small secondary" onclick="setMediaPurpose('${esc(m.id)}', 'customer')">Make customer file</button>`}
       <button class="small danger" onclick="deleteMedia('${esc(m.id)}')">Delete</button></div>`;
   }).join('');
 }
@@ -259,6 +264,16 @@ async function describeMedia(id) {
     loadMedia();
   } catch (e) { toast('Describe failed: ' + e.message); }
 }
+async function setMediaPurpose(id, purpose) {
+  try {
+    await apiJson(api('/media/' + encodeURIComponent(id) + '/purpose'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose }),
+    });
+    toast(purpose === 'customer' ? 'This file can now be sent to customers when it fits.' : 'This file is brain knowledge only now — it will never be sent to a customer.');
+    loadMedia();
+  } catch (e) { toast('Could not change purpose: ' + e.message); }
+}
 async function uploadMedia() {
   const f = $('mediaFile').files[0];
   if (!f) { toast('Please choose a file first.'); return; }
@@ -267,6 +282,9 @@ async function uploadMedia() {
   // "Kis ke liye hai" — the owner's own words about the file, stored
   // on the media item and used by describe + the brain's knowledge.
   fd.append('ownerNote', $('mediaOwnerNote').value);
+  // Purpose: knowledge (default, brain-only) or customer (sendable).
+  const purposeEl = $('mediaPurpose');
+  fd.append('purpose', purposeEl && purposeEl.value === 'customer' ? 'customer' : 'knowledge');
   try {
     const d = await apiJson(api('/media'), { method: 'POST', body: fd });
     toast('Uploaded: ' + (d.media.originalName || ''));
@@ -341,6 +359,32 @@ function startAutoRefresh() {
   statusTimer = setInterval(() => { if (businessId()) refreshStatus(); }, 15000);
 }
 
+// New visitor, no Business ID yet: explain that the board is empty
+// until they pick an ID, and offer to generate one. Each ID is its
+// own private business — nothing is shared between IDs.
+function showNewUserHint() {
+  const row = document.querySelector('.biz-row');
+  if (!row || document.getElementById('newUserHint')) return;
+  const div = document.createElement('div');
+  div.id = 'newUserHint';
+  div.className = 'muted';
+  div.style.margin = '8px 0';
+  div.textContent = 'New here? This board is empty until you pick a Business ID — type any ID you like (e.g. my-shop-123) and tap Load, or create one: ';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'small secondary';
+  btn.textContent = 'Create a new Business ID';
+  btn.addEventListener('click', () => {
+    const id = 'biz-' + Math.random().toString(36).slice(2, 10);
+    setBusinessId(id);
+    loadedOnce = false;
+    refreshStatus();
+    toast('Your Business ID is ' + id + ' — it is saved on this phone.');
+  });
+  div.appendChild(btn);
+  row.after(div);
+}
+
 // --- Page init: Business ID carries across pages, no login ---
 document.addEventListener('DOMContentLoaded', () => {
   // Burger drawer wiring (UI v3) — closes on item tap, outside tap, or X.
@@ -357,8 +401,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
   const fromUrl = params.get('business');
   const saved = fromUrl || localStorage.getItem('musa-business-id') || '';
-  // Always show a Business ID in the box — empty box was the 404 bug.
-  setBusinessId(saved || DEFAULT_BUSINESS_ID);
+  setBusinessId(saved);
+  if (!saved) showNewUserHint();
   const bid = $('businessId');
   if (bid) {
     bid.addEventListener('input', () => { const v = bid.value.trim(); if (v) localStorage.setItem('musa-business-id', v); });

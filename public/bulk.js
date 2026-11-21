@@ -230,6 +230,10 @@ function renderMakeDrafts() {
   if (open) open.href = n.phone ? waLinkClient(n.phone, c.message) : '#';
   const next = document.getElementById('makeDraftsNext');
   if (next) next.textContent = makeDrafts.idx + 1 < total ? 'Next chat' : 'Done';
+  const hint = document.getElementById('makeDraftsHint');
+  if (hint) hint.textContent = makeDrafts.idx + 1 < total
+    ? 'Chat opens with the message typed, not sent. Press back — the next chat opens by itself, and the typed text stays as a draft.'
+    : 'Last chat — press back and you are done, all drafts are in WhatsApp.';
 }
 
 function makeDraftsCurrentLink() {
@@ -321,7 +325,12 @@ async function makeDraftsResumeAfterReload() {
     const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
     navType = nav ? nav.type : '';
   } catch (e) {}
-  if (navType !== 'reload' && navType !== 'back_forward') return;
+  // A return from the WhatsApp app on some phones reports this load as
+  // a plain 'navigate' instead of reload/back-forward — allow that too,
+  // but ONLY within 60 seconds of leaving, so a fresh visit minutes
+  // later can never open a chat by itself.
+  const freshReturn = awayMs < 60 * 1000;
+  if (navType !== 'reload' && navType !== 'back_forward' && !freshReturn) return;
   try {
     const d = await apiJson(api('/campaigns/' + encodeURIComponent(stored.campaignId)));
     const campaign = d.campaign;

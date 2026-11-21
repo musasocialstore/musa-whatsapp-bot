@@ -72,6 +72,10 @@
       <div class="file-pending-body">
         <b id="brainFileName"></b>
         <input id="brainFileCaption" placeholder="Is file ke baare mein batao — kis kaam ke liye hai?" autocomplete="off" enterkeyhint="send">
+        <div class="purpose-row">
+          <label><input type="radio" name="brainFilePurpose" value="knowledge" checked> Brain knowledge — sirf brain seekhega, customer ko kabhi nahi bhejega</label>
+          <label><input type="radio" name="brainFilePurpose" value="customer"> Customer file — zaroorat par customer ko bhejega</label>
+        </div>
         <div class="file-pending-actions">
           <button class="chat-send" id="brainFileSend" type="button" onclick="sendBrainMedia()">Send to brain</button>
           <button class="secondary small" type="button" onclick="cancelBrainMedia()">Cancel</button>
@@ -90,7 +94,7 @@
 </main>
 
 <div id="toast"></div>
-<script src="/app.js"></script>
-<script src="/brain.js"></script>
+<script src="/app.js?v=20261121"></script>
+<script src="/brain.js?v=20261121"></script>
 </body>
 </html>
