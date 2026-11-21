@@ -454,8 +454,10 @@ app.post('/api/business/:id/leads/:leadId/confirm', async (req, res) => {
 // the campaign. No admin panel, no premium, no ads, no login —
 // Business ID only, like the rest of the board.
 // SAFETY: bulk sending can get a number flagged by WhatsApp, so sends
-// are paced 8–15 seconds apart (random), max 100 numbers per campaign,
-// and nothing ever starts on its own. Draft campaigns send NOTHING:
+// are paced 8–15 seconds apart (random), the owner must confirm
+// consent, and nothing ever starts on its own. There is NO cap on how
+// many numbers a campaign can carry (Zaib, 2026-11-21 — unlimited).
+// Draft campaigns send NOTHING:
 // they are created instantly as wa.me prefilled links, and the owner
 // opens each one on their phone and presses send when they want.
 function getCampaign(business, campaignId) {
@@ -481,6 +483,22 @@ async function runCampaign(businessId, campaignId) {
     return true;
   }
   try {
+    // Campaign attachment (2026-11-21, Zaib): one picture, video or
+    // voice note may ride with the campaign. Loaded once here, sent
+    // with every number — a missing file falls back to text only.
+    let bulkMedia = null;
+    let bulkBuffer = null;
+    {
+      const business0 = store.getBusiness(businessId);
+      const campaign0 = getCampaign(business0, campaignId);
+      if (campaign0 && campaign0.mediaId) {
+        bulkMedia = (business0.media || []).find((m) => m.id === campaign0.mediaId) || null;
+        if (bulkMedia) {
+          const filePath = path.join(UPLOAD_ROOT, businessId, bulkMedia.filename);
+          if (fs.existsSync(filePath)) bulkBuffer = fs.readFileSync(filePath);
+        }
+      }
+    }
     let first = true;
     for (;;) {
       let business = store.getBusiness(businessId);
@@ -506,7 +524,7 @@ async function runCampaign(businessId, campaignId) {
         if (!session.sock || (business.linked !== true && session.status !== 'linked')) {
           throw new Error('WhatsApp got disconnected');
         }
-        await session.sock.sendMessage(n.phone.replace(/\D/g, '') + '@s.whatsapp.net', { text: campaign.message });
+        await bulk.sendBulkMessage(session.sock, n.phone.replace(/\D/g, '') + '@s.whatsapp.net', bulkMedia, bulkBuffer, campaign.message);
         n.status = 'sent';
         n.error = '';
       } catch (e) {
@@ -545,14 +563,21 @@ app.post('/api/business/:id/campaigns', (req, res) => {
   if (!parsed.valid.length) {
     return res.status(400).json({ error: 'No valid numbers found — enter numbers like +923106865269, one per line or separated by commas', valid: 0, duplicates: parsed.duplicates, invalid: parsed.invalid });
   }
-  if (parsed.valid.length > bulk.MAX_NUMBERS) {
-    return res.status(400).json({ error: `Too many numbers — max ${bulk.MAX_NUMBERS} per campaign`, valid: parsed.valid.length, duplicates: parsed.duplicates, invalid: parsed.invalid });
+  // Optional attachment (2026-11-21, Zaib): one picture, video or voice
+  // note, uploaded first on the Media page or in the wizard. It must
+  // exist in this business's media — a made-up id is refused.
+  let mediaId = null, mediaKind = null, mediaName = null;
+  if (b.mediaId) {
+    const item = (business.media || []).find((m) => m.id === String(b.mediaId));
+    if (!item) return res.status(400).json({ error: 'Attachment not found — upload the picture, video or voice note first' });
+    mediaId = item.id; mediaKind = item.kind; mediaName = item.originalName || item.filename;
   }
   business.campaigns = business.campaigns || [];
   const campaign = {
     id: 'cmp_' + Date.now(),
     type,
     message,
+    mediaId, mediaKind, mediaName,
     numbers: parsed.valid.map((v) => ({ phone: v.phone, status: type === 'draft' ? 'draft' : 'pending', error: '' })),
     status: type === 'draft' ? 'draft' : 'ready',
     createdAt: new Date().toISOString(),
@@ -606,7 +631,7 @@ app.post('/api/business/:id/campaigns/:campaignId/stop', (req, res) => {
   res.json({ status: 'paused', campaign });
 });
 
-// List campaigns, newest first (numbers included — max 100 per campaign).
+// List campaigns, newest first (numbers included — no cap on count).
 app.get('/api/business/:id/campaigns', (req, res) => {
   const business = store.getBusiness(businessId(req));
   const list = (business.campaigns || []).slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -638,7 +663,14 @@ app.post('/api/business/:id/campaigns/:campaignId/send-one', async (req, res) =>
   const session = whatsapp.getSession(id);
   if (!whatsapp.isLiveLinked(id)) return res.status(400).json({ error: 'WhatsApp not linked — link it on the Connect page first' });
   try {
-    await session.sock.sendMessage(n.phone.replace(/\D/g, '') + '@s.whatsapp.net', { text: campaign.message });
+    // The campaign's attachment (if any) rides along, same as the runner.
+    const media = campaign.mediaId ? (business.media || []).find((m) => m.id === campaign.mediaId) : null;
+    let buffer = null;
+    if (media) {
+      const filePath = path.join(UPLOAD_ROOT, id, media.filename);
+      if (fs.existsSync(filePath)) buffer = fs.readFileSync(filePath);
+    }
+    await bulk.sendBulkMessage(session.sock, n.phone.replace(/\D/g, '') + '@s.whatsapp.net', media, buffer, campaign.message);
     n.status = 'sent';
     n.error = '';
   } catch (e) {
