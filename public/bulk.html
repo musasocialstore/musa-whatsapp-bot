@@ -61,6 +61,21 @@
       <label for="bulkMessage">Message</label>
       <textarea id="bulkMessage" rows="4"></textarea>
       <p class="char-count" id="bulkMsgCount">0 characters</p>
+      <!-- Attachment (2026-11-21, Zaib): one photo, video or voice note
+           may ride with the campaign — picture/video with the message
+           as caption, voice note first and the message after. -->
+      <label>Attach a photo, video or voice note (optional)</label>
+      <label class="file-btn" for="bulkMediaFile">Choose a photo, video or voice note</label>
+      <input type="file" id="bulkMediaFile" class="file-input-hidden" accept="image/*,video/*,audio/*">
+      <div id="bulkMediaPreview" class="file-pending" style="display:none">
+        <div class="file-pending-preview" id="bulkMediaThumb"></div>
+        <div class="file-pending-body">
+          <b id="bulkMediaName"></b>
+          <span class="muted" id="bulkMediaKind"></span>
+          <div class="file-pending-actions"><button class="secondary small" type="button" onclick="removeBulkMedia()">Remove</button></div>
+        </div>
+      </div>
+      <p class="muted">A picture or video goes with your message as its caption. A voice note goes first, then the message as text.</p>
       <div class="chat-list" style="flex:none;max-height:32vh">
         <div class="chat-msg brain"><b>Preview</b><p id="bulkMsgPreview">Your message will appear here.</p></div>
       </div>
