@@ -566,10 +566,10 @@ function buildSystemPrompt(business, media) {
   const customerMedia = (media || []).filter((m) => m.purpose === 'customer');
   const knowledgeMedia = (media || []).filter((m) => m.purpose !== 'customer');
   const mediaList = customerMedia
-    .map((m) => `- ${m.kind} (${classifyMedia(m)}): ${m.originalName}${m.caption ? ' — owner private note (NEVER send these words to the customer, write your own short line): ' + m.caption : ''}${m.useFor ? ` (send when customer asks about: ${m.useFor})` : ''}${m.ownerNote ? ` [owner private note: ${m.ownerNote}]` : ''}${m.description ? ` [AI saw in this file: ${m.description.slice(0, 300)}]` : ''}`)
+    .map((m) => `- ${m.kind} (${classifyMedia(m)})${m.caption ? ' — owner private note (NEVER send these words to the customer, write your own short line): ' + m.caption : ''}${m.useFor ? ` (send when customer asks about: ${m.useFor})` : ''}${m.ownerNote ? ` [owner private note: ${m.ownerNote}]` : ''}${m.description ? ` [AI saw in this file: ${m.description.slice(0, 300)}]` : ''}`)
     .join('\n');
   const knowledgeList = knowledgeMedia
-    .map((m) => `- ${m.kind}: ${m.originalName}${m.description ? ` — what is in it: ${m.description.slice(0, 300)}` : ''}${m.ownerNote ? ` (owner note: ${m.ownerNote})` : ''}${m.caption ? ` (owner note: ${m.caption})` : ''}`)
+    .map((m) => `- ${m.kind} (${classifyMedia(m)})${m.description ? ` — what is in it: ${m.description.slice(0, 300)}` : ''}${m.ownerNote ? ` (owner note: ${m.ownerNote})` : ''}${m.caption ? ` (owner note: ${m.caption})` : ''}`)
     .join('\n');
   return [
     `You are a friendly HUMAN team member working for this business — talk like a real friendly person chatting on WhatsApp, NOT like a robot, a board, or a template. Be warm, natural, and short. Never say you are an AI, an assistant, a robot, or a bot — you are the business's own team member.`,
@@ -590,6 +590,7 @@ function buildSystemPrompt(business, media) {
     'Media — understand it, don\'t just attach it:',
     '- Each file below is labelled with what it IS (logo / offer banner / price list / demo / intro). Send one ONLY when it really fits what the customer is asking about — a deal question gets the offer banner, a price question gets the price list, a first greeting can get the logo, "show me" gets the demo. Always send a short written line WITH it, saying what it is ("Here is our deal banner — this is today\'s offer..."). Never send media on every message, never send it at random.',
     '- The owner\'s private notes (caption / useFor / owner note) are for YOUR understanding only — never send those words to the customer. When you send a file, write your own short human line about it.',
+    '- You CANNOT attach a file by writing its name — NEVER write [image: ...], file names, or file paths in your reply (the customer would only see a useless file name, not the picture). Files are attached automatically by the system when one fits what the customer asked — just mention it in words and the system sends the real picture.',
     customerMedia.length ? `Media you MAY send to customers (only when one really fits what they ask):\n${mediaList}` : 'No customer media uploaded yet — send no files.',
     knowledgeList ? `Brain knowledge files — NEVER send these to any customer, they are only for your own knowledge. Answer FROM what is in them, in your own words:\n${knowledgeList}` : '',
     'WhatsApp policy — stay safe, or the number gets banned:',
@@ -944,4 +945,19 @@ function varyIfRepeat(text, lastReply, lang) {
   return text + ' ' + closer;
 }
 
-module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt };
+// Defensive strip (2026-11-21, Zaib): the AI once wrote the file name
+// "[image: file_00000000c2fc82118906104723582845.png]" into its reply
+// text, and the customer only saw the useless name, not the picture.
+// Files are attached by pickMedia + whatsapp.js, never by naming them
+// in text — so any such placeholder or bare file name is removed from
+// an outgoing reply before it is sent. Normal words are untouched.
+function stripMediaRefs(text) {
+  return String(text || '')
+    .replace(/\[(?:image|file|photo|picture|video|audio|media)\s*:[^\]]*\]/gi, '')
+    .replace(/(?:\d+-)?file_[A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|webp|gif|mp4|mov|mp3|ogg|wav|pdf)\b/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n[ \t]*\n[ \t]*\n+/g, '\n\n')
+    .trim();
+}
+
+module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs };

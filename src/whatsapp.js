@@ -685,6 +685,10 @@ async function handleIncoming(businessId, sock, msg) {
   // the no-key fallback used to repeat verbatim ("Website create
   // karvani hai" twice -> same reply twice). Vary it instead.
   reply.text = ai.varyIfRepeat(reply.text, lastReplyByChat.get(key), ai.detectLanguage(text));
+  // Never let a file name / [image: ...] placeholder reach the customer
+  // (2026-11-21: the AI wrote one into its text and the customer only
+  // saw the name, not the picture). The real picture is attached above.
+  reply.text = ai.stripMediaRefs(reply.text);
   history.push({ role: 'bot', text: reply.text });
   histories.set(key, history.slice(-20));
   lastReplyByChat.set(key, reply.text);
