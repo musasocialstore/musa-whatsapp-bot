@@ -19,6 +19,12 @@ let bulkType = 'send';
 let bulkParsed = null;
 let bulkPollTimer = null;
 let bulkStep = 1;
+// Campaign attachment (2026-11-21, Zaib): the media item id uploaded
+// in step 2, sent with the campaign. Null = text only.
+let bulkMediaId = null;
+let bulkMediaKind = null;
+let bulkMediaName = null;
+let bulkMediaUrl = null;
 
 function normalizeNumberClient(raw) {
   let s = String(raw || '').trim().replace(/[\s\-().]/g, '');
@@ -86,7 +92,6 @@ function bulkGoStep(n) {
     if (bulkStep === 1) {
       const p = parseBulkNumbers();
       if (!p.valid.length) { toast('No valid numbers — enter numbers like +923106865269.'); return; }
-      if (p.valid.length > 100) { toast('Too many numbers — max 100 per campaign.'); return; }
     }
     if (bulkStep === 2) {
       const msg = (document.getElementById('bulkMessage') || {}).value.trim();
@@ -109,6 +114,7 @@ function renderBulkReview() {
   const p = bulkParsed || parseNumbersClient((document.getElementById('bulkNumbers') || {}).value || '');
   const msg = (document.getElementById('bulkMessage') || {}).value.trim();
   el.innerHTML = '<p><b>' + p.valid.length + ' numbers</b> · ' + (bulkType === 'draft' ? 'Draft' : 'Send') + '</p>'
+    + (bulkMediaId ? '<p class="meta">Attachment: ' + esc(bulkMediaKind || '') + ' — ' + esc(bulkMediaName || '') + '</p>' : '<p class="meta">No attachment — text only.</p>')
     + '<p class="msg-preview">' + esc(msg) + '</p>';
 }
 
@@ -386,6 +392,55 @@ function updateBulkMsgPreview() {
   if (prev) prev.textContent = msg.trim() || 'Your message will appear here.';
 }
 
+// --- Campaign attachment (2026-11-21, Zaib) ------------------------------
+// The file is uploaded to the board's Media library as a 'customer'
+// file the moment it is chosen, so the campaign create only has to
+// send its media id. Removing it clears the campaign link — the file
+// itself stays in Media, reusable for the next campaign.
+function renderBulkMediaPreview() {
+  const box = document.getElementById('bulkMediaPreview');
+  if (!box) return;
+  if (!bulkMediaId) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const name = document.getElementById('bulkMediaName');
+  if (name) name.textContent = bulkMediaName || '';
+  const kind = document.getElementById('bulkMediaKind');
+  if (kind) kind.textContent = (bulkMediaKind || '') + ' — goes with your message';
+  const thumb = document.getElementById('bulkMediaThumb');
+  if (thumb) {
+    thumb.innerHTML = (bulkMediaKind === 'image' && bulkMediaUrl)
+      ? `<img src="${esc(bulkMediaUrl)}" alt="">`
+      : esc((bulkMediaKind || 'file').toUpperCase());
+  }
+}
+function removeBulkMedia() {
+  bulkMediaId = null; bulkMediaKind = null; bulkMediaName = null; bulkMediaUrl = null;
+  const f = document.getElementById('bulkMediaFile');
+  if (f) f.value = '';
+  renderBulkMediaPreview();
+}
+async function uploadBulkMedia(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('purpose', 'customer');
+  fd.append('useFor', 'bulk campaign');
+  fd.append('caption', (document.getElementById('bulkMessage') || {}).value || '');
+  try {
+    const d = await apiJson(api('/media'), { method: 'POST', body: fd });
+    const m = d.media || {};
+    bulkMediaId = m.id || null;
+    bulkMediaKind = m.kind || null;
+    bulkMediaName = m.originalName || m.filename || file.name;
+    bulkMediaUrl = m.url || null;
+    renderBulkMediaPreview();
+    toast('Attached: ' + bulkMediaName);
+  } catch (e) {
+    toast('Attachment failed: ' + e.message);
+    removeBulkMedia();
+  }
+}
+
 // --- Create + start -----------------------------------------------------------
 async function startBulkCampaign() {
   const consent = document.getElementById('bulkConsent');
@@ -397,14 +452,13 @@ async function startBulkCampaign() {
   bulkParsed = parsed;
   renderBulkPreview();
   if (!parsed.valid.length) { toast('No valid numbers — enter numbers like +923106865269.'); return; }
-  if (parsed.valid.length > 100) { toast('Too many numbers — max 100 per campaign.'); return; }
   const btn = document.getElementById('bulkStartBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
   try {
     const d = await apiJson(api('/campaigns'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ numbers: raw, message, type: bulkType }),
+      body: JSON.stringify({ numbers: raw, message, type: bulkType, mediaId: bulkMediaId }),
     });
     const campaign = d.campaign;
     const nums = document.getElementById('bulkNumbers');
@@ -414,6 +468,7 @@ async function startBulkCampaign() {
     updateBulkMsgPreview();
     bulkParsed = null;
     renderBulkPreview();
+    removeBulkMedia();
     if (bulkType === 'draft') {
       // Drafts are saved on the board only — nothing is sent and the
       // owner's phone WhatsApp NEVER opens. The draft sits in My
@@ -466,6 +521,7 @@ function renderBulkCampaigns(list) {
       <p><b>${esc(c.type === 'draft' ? 'Draft' : 'Send')} campaign</b> ${campaignStatusBadge(c)}
       <span class="badge new">${esc(String(c.numbers.length))} numbers</span></p>
       <p>${esc((c.message || '').slice(0, 160))}${(c.message || '').length > 160 ? '…' : ''}</p>
+      ${c.mediaKind ? `<p class="meta">Attachment: ${esc(c.mediaKind)}${c.mediaName ? ' — ' + esc(c.mediaName) : ''}</p>` : ''}
       <p class="meta">Sent: ${c.sentCount || 0} · Failed: ${c.failedCount || 0} · Total: ${total} · ${esc(c.createdAt || '')}</p>
       <ul>${rows}</ul>
       ${c.status === 'running' ? `<button class="small danger" onclick="stopBulkCampaign('${esc(c.id)}')">Stop</button>` : c.status === 'paused' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Continue</button>` : c.type === 'draft' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Send all now</button>` : c.type === 'send' && c.status === 'ready' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Start now</button>` : ''}
@@ -552,6 +608,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (msg) {
     msg.addEventListener('input', updateBulkMsgPreview);
     updateBulkMsgPreview();
+  }
+  const mediaInput = document.getElementById('bulkMediaFile');
+  if (mediaInput) {
+    mediaInput.addEventListener('change', () => {
+      const f = mediaInput.files[0];
+      if (!f) return;
+      uploadBulkMedia(f);
+    });
   }
   const fileInput = document.getElementById('bulkFile');
   if (fileInput) {
