@@ -468,7 +468,7 @@ function renderBulkCampaigns(list) {
       <p>${esc((c.message || '').slice(0, 160))}${(c.message || '').length > 160 ? '…' : ''}</p>
       <p class="meta">Sent: ${c.sentCount || 0} · Failed: ${c.failedCount || 0} · Total: ${total} · ${esc(c.createdAt || '')}</p>
       <ul>${rows}</ul>
-      ${c.status === 'running' ? `<button class="small danger" onclick="stopBulkCampaign('${esc(c.id)}')">Stop</button>` : c.status === 'paused' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Continue</button>` : c.type === 'draft' ? (makeDrafts && makeDrafts.armed && makeDrafts.campaign && makeDrafts.campaign.id === c.id ? `<button class="small danger" onclick="stopMakeDrafts()">Stop drafts</button>` : `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Send all now</button> <button class="small secondary" onclick="startMakeDrafts('${esc(c.id)}')">Make drafts</button>`) : c.type === 'send' && c.status === 'ready' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Start now</button>` : ''}
+      ${c.status === 'running' ? `<button class="small danger" onclick="stopBulkCampaign('${esc(c.id)}')">Stop</button>` : c.status === 'paused' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Continue</button>` : c.type === 'draft' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Send all now</button>` : c.type === 'send' && c.status === 'ready' ? `<button class="small" onclick="startExistingBulkCampaign('${esc(c.id)}')">Start now</button>` : ''}
     </div>`;
   }).join('');
 }
