@@ -417,6 +417,81 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .chat-mic.listening { background: var(--red-tint); color: var(--red); border-color: #f5c6c6; }
 .chat-send { width: auto; margin: 0; flex: none; padding: 13px 16px; min-height: 48px; }
 
+/* --- Brain Chat: Muse-friendly (2026-11-21, Zaib) -------------------------
+   The Brain Chat is NOT a WhatsApp clone any more — it feels like
+   Muse's own chat: airy, soft, bubbly and smooth. Big rounded
+   bubbles, a gradient avatar dot on the brain's messages (no stiff
+   "BRAIN" label), a pill composer with round bubbly 3D buttons, and a
+   soft slide-in on every new message. All IDs stay the same — only
+   the look changes, so brain.js needs no change. */
+.muse-chat .chat-header { border-bottom: 1px solid var(--border-soft); padding-bottom: 14px; margin-bottom: 14px; }
+.muse-chat .chat-avatar {
+  width: 52px; height: 52px;
+  background: linear-gradient(135deg, #2dd4bf, #14b8a6 45%, var(--teal-deep));
+  box-shadow: 0 4px 0 #0a4a44, 0 12px 22px rgba(15, 118, 110, .35);
+}
+.muse-chat .chat-list {
+  background: linear-gradient(180deg, #fdfcf8, #f6f4ec);
+  border: 1px solid var(--border-soft);
+  border-radius: 24px; padding: 16px 14px;
+  box-shadow: inset 0 2px 8px rgba(16, 32, 29, .03);
+}
+.muse-chat .summary-card {
+  border-radius: 20px; padding: 14px 16px;
+  background: linear-gradient(135deg, #eef8f5, #e3f2ef);
+  box-shadow: 0 2px 8px rgba(15, 118, 110, .08);
+}
+.muse-chat .chat-msg { max-width: 92%; animation: msg-in .28s ease both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* No stiff labels — the avatar dot says who is talking. */
+.muse-chat .chat-msg b { display: none; }
+.muse-chat .chat-msg.brain { position: relative; padding-left: 40px; }
+.muse-chat .chat-msg.brain::before {
+  content: ""; position: absolute; left: 0; top: 2px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: radial-gradient(circle at 32% 30%, #5eead4, #14b8a6 55%, var(--teal-deep));
+  box-shadow: 0 2px 6px rgba(15, 118, 110, .35);
+}
+.muse-chat .chat-msg.brain p {
+  border-radius: 22px 22px 22px 8px; padding: 13px 16px;
+  box-shadow: 0 2px 10px rgba(16, 32, 29, .08);
+  font-size: 15.5px;
+}
+.muse-chat .chat-msg.owner p {
+  background: linear-gradient(135deg, #12877d, var(--teal-deep));
+  border-radius: 22px 22px 8px 22px; padding: 13px 16px;
+  box-shadow: 0 3px 10px rgba(15, 118, 110, .3);
+  font-size: 15.5px;
+}
+.muse-chat .chat-msg.analyzing .typing-dots { border-radius: 22px 22px 22px 8px; padding: 16px 18px; }
+/* Pill composer: big rounded input + round bubbly 3D buttons. */
+.muse-chat .chat-input-row { gap: 10px; }
+.muse-chat .chat-input-row input#brainInput {
+  min-height: 54px; border-radius: 999px; padding: 12px 20px;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(16, 32, 29, .07);
+  font-size: 16px; background: #fff;
+}
+.muse-chat .chat-input-row input#brainInput:focus { border-color: var(--teal-tint-2); box-shadow: 0 0 0 3px var(--teal-tint), 0 2px 10px rgba(16, 32, 29, .07); outline: none; }
+.muse-chat .chat-input-row .icon-btn {
+  width: 50px; height: 50px; min-height: 50px; border-radius: 50%;
+  background: #fff; color: var(--teal-deep);
+  border: 1px solid var(--border);
+  box-shadow: 0 3px 0 #d8ddd9, 0 8px 16px rgba(16, 32, 29, .1);
+  transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+}
+.muse-chat .chat-input-row .icon-btn:active { transform: scale(.92); box-shadow: 0 1px 0 #d8ddd9, 0 3px 8px rgba(16, 32, 29, .1); }
+.muse-chat .chat-input-row .chat-send {
+  width: 54px; height: 54px; min-height: 54px; border-radius: 50%;
+  padding: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #2dd4bf, var(--teal) 55%, var(--teal-deep));
+  box-shadow: 0 4px 0 #0a4a44, 0 12px 22px rgba(15, 118, 110, .35);
+  transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+}
+.muse-chat .chat-input-row .chat-send:active { transform: scale(.92); box-shadow: 0 1px 0 #0a4a44, 0 4px 10px rgba(15, 118, 110, .3); }
+.muse-chat .chat-input-row .chat-send svg { width: 24px; height: 24px; display: block; }
+.muse-chat .file-pending { border-radius: 20px; box-shadow: 0 2px 10px rgba(15, 118, 110, .08); }
+
 /* --- Brain Chat: pending file chip — file is only sent WITH a message ------ */
 .file-pending {
   display: flex; gap: 12px; align-items: flex-start;
