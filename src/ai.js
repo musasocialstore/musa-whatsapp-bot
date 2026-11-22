@@ -113,16 +113,17 @@ async function generateContentResilient(parts) {
   throw lastError || new Error('Gemini request failed');
 }
 
-// --- Fast brain path (2026-11-20, Brain improvements: "Analyzing" took
+// --- Fast path (2026-11-20, Brain improvements: "Analyzing" took
 // 70–96s under Gemini overload) ---
-// The OWNER's chat with the brain must answer in SECONDS, never a
-// minute. This path is used ONLY by brainChat — never by customer
-// replies (generateReply keeps the 45s + retries above, because a
-// customer reply is worth waiting for; an owner waiting on "Analyzing…"
-// is not). Total budget ~14s: one 12s attempt on the primary model,
-// at most ONE retry on the lite fallback with whatever budget is left,
-// then give up and let the caller confirm locally. A bad key fails
-// fast (non-retryable 400) and returns in under a second.
+// Replies must answer in SECONDS, never a minute. This path is used by
+// brainChat AND by customer replies (generateReply switched to it
+// 2026-11-22, Zaib: a customer reply took 60s on the 45s x 3 resilient
+// path while the customer stared at a dead chat — a fast facts-based
+// fallback beats a minute of silence). Total budget ~14s: one 12s
+// attempt on the primary model, at most ONE retry on the lite fallback
+// with whatever budget is left, then give up and let the caller answer
+// locally. A bad key fails fast (non-retryable 400) and returns in
+// under a second.
 const BRAIN_TIMEOUT_MS = 12000;
 const BRAIN_TOTAL_BUDGET_MS = 14000;
 async function generateContentFast(parts) {
@@ -647,7 +648,12 @@ async function generateReply(business, customerText, history, opts) {
       convo ? `Conversation so far:\n${convo}` : 'This is the start of the conversation.',
       `Customer just said: ${customerText}\nReply as the business:`,
     ].filter(Boolean).join('\n\n');
-    const result = await generateContentResilient([{ text: promptText }]);
+    // Customer replies use the FAST path too (2026-11-22, Zaib: a
+    // customer reply took 60s — primary 45s timeout, then retry, then
+    // fallback — while the customer stared at a dead chat. A fast
+    // facts-based fallback beats a minute of silence; when Gemini is
+    // healthy the primary answers in seconds, same quality as before).
+    const result = await generateContentFast([{ text: promptText }]);
     let text = result.response.text().trim();
     if (!text) throw new Error('Gemini returned an empty reply');
     // If the AI picked media but its text never mentions it, add the

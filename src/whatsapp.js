@@ -600,6 +600,38 @@ function humanDelayMs(replyText) {
   return Math.min(10000, Math.round(base + extra));
 }
 
+// Typing WHILE the reply is being written (2026-11-22, Zaib: the
+// customer saw nothing for up to a minute, then "typing…" briefly,
+// then — in their eyes — nothing. The reply was generated FIRST and
+// the typing indicator only went out with the send, so a slow Gemini
+// call looked exactly like a broken bot. Now the customer sees typing
+// from the first second, refreshed every few seconds while the brain
+// thinks. Returns a stop function; self-stops after 75s so a leaked
+// timer can never run forever. Presence failures are swallowed — a
+// dead socket must never break the reply path.
+function startTyping(sock, jid, intervalMs) {
+  let stopped = false;
+  const tick = () => {
+    if (stopped) return;
+    try {
+      const p = sock.sendPresenceUpdate('composing', jid);
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) {}
+  };
+  tick();
+  const timer = setInterval(tick, intervalMs || 8000);
+  if (timer.unref) timer.unref();
+  const maxTimer = setTimeout(() => stop(), 75000);
+  if (maxTimer.unref) maxTimer.unref();
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    clearTimeout(maxTimer);
+  }
+  return stop;
+}
+
 async function sendHumanLike(sock, jid, replyText, sendFn) {
   const delay = humanDelayMs(replyText);
   try { await sock.sendPresenceUpdate('composing', jid); } catch (_) {}
@@ -743,6 +775,9 @@ async function handleIncoming(businessId, sock, msg) {
   // — the lead must show the real name and never a fake number.
   const displayName = msg.pushName || '';
   const isLid = !!(fromJid && fromJid.endsWith('@lid'));
+  // Typing from the FIRST second (see startTyping): the customer must
+  // never stare at a dead chat while the reply is being written.
+  const stopTyping = startTyping(sock, fromJid);
   // Text first; a picture / video / voice note is understood with
   // Gemini and becomes text the bot can answer to (2026-11-21, Zaib).
   let text = msg.message.conversation
@@ -755,7 +790,7 @@ async function handleIncoming(businessId, sock, msg) {
     const understood = await understandCustomerMedia(msg);
     if (understood) text = understood;
   }
-  if (!text.trim()) return;
+  if (!text.trim()) { stopTyping(); return; }
 
   const key = `${businessId}:${fromJid}`;
   const history = histories.get(key) || [];
@@ -799,6 +834,9 @@ async function handleIncoming(businessId, sock, msg) {
   try { ai.learnFromCustomer(business, text, reply.text); } catch (e) {}
   try { store.saveBusiness(business); } catch (e) { console.error('Could not save business after customer chat:', e && e.message); }
 
+  // Stop the "thinking" typing here — sendHumanLike sends its own
+  // composing presence with the real send.
+  stopTyping();
   // Send media first if the AI picked one, then the short text reply.
   // The media always goes WITH a written line about what it is —
   // never a bare photo/video. The caption is ALWAYS the AI's own short
@@ -941,4 +979,4 @@ async function disconnect(businessId) {
   try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
 }
 
-module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
+module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
