@@ -34,6 +34,9 @@
 // from a ban.
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const store = require('./store');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Primary model: gemini-3.8-flash is the model Google itself recommends
@@ -1102,6 +1105,41 @@ function designCaption(lang) {
   return lines[lang] || lines.ur;
 }
 
+// Save a generated design preview as a customer media item (2026-11-22):
+// the picture lands in uploads/<businessId>/gen-<ts>.png and is listed
+// on the Media page, so the owner can send it to customers later.
+function saveGeneratedImage(business, businessId, generated) {
+  if (!generated || !generated.ok || !generated.buffer) return { ok: false, reason: 'no-image' };
+  try {
+    const dir = path.join(store.DATA_DIR, 'uploads', businessId);
+    fs.mkdirSync(dir, { recursive: true });
+    const filename = 'gen-' + Date.now() + '.png';
+    fs.writeFileSync(path.join(dir, filename), generated.buffer);
+    const item = {
+      id: 'media_' + Date.now(), kind: 'image', filename, originalName: filename,
+      caption: 'AI-generated design preview for customer', useFor: 'design preview',
+      ownerNote: 'AI-generated preview — sent when a customer asks to see the design',
+      purpose: 'customer', description: 'AI-generated design preview for the customer.',
+      url: `/media/${encodeURIComponent(businessId)}/${encodeURIComponent(filename)}`,
+      createdAt: new Date().toISOString(),
+    };
+    business.media = business.media || [];
+    business.media.push(item);
+    return { ok: true, media: item, url: item.url };
+  } catch (e) {
+    console.error('Could not save generated image:', (e && e.message) || e);
+    return { ok: false, reason: 'save-failed' };
+  }
+}
+
+// The owner asked for a picture and none could be made (2026-11-22):
+// plain and honest — and never the rude "I can't send a picture /
+// mere paas option nahi hai" wording. The team line is the promise.
+function imageFailedNote(lang) {
+  if (lang === 'en') return 'This picture could not be made right now — the team will share the design with you soon and confirm the final one.';
+  return 'Ye picture abhi ban nahi saki — team jald aap ko design share karegi aur final confirm karegi.';
+}
+
 // Defensive strip (2026-11-21, Zaib): the AI once wrote the file name
 // "[image: file_00000000c2fc82118906104723582845.png]" into its reply
 // text, and the customer only saw the useless name, not the picture.
@@ -1134,4 +1172,4 @@ function stripPictureRefusal(text) {
     .trim();
 }
 
-module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs, stripPictureRefusal, learnFromCustomer, learnedQaSection, detectImageRequest, buildImagePrompt, generateCustomerImage, designCaption };
+module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs, stripPictureRefusal, learnFromCustomer, learnedQaSection, detectImageRequest, buildImagePrompt, generateCustomerImage, designCaption, saveGeneratedImage, imageFailedNote };
