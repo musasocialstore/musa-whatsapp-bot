@@ -846,6 +846,10 @@ function distillBrainSummary(business) {
 }
 
 async function brainChat(business, ownerMessage) {
+  // The owner asked for a design / picture (2026-11-22, live probe):
+  // creating designs IS the brain's job — it must never refuse ("design
+  // banana mera kaam nahi hai") or say the service is not available.
+  const wantsImage = detectImageRequest(ownerMessage);
   if (!isAiConfigured()) {
     // No key: confirm locally in seconds — never make the owner wait
     // on "Analyzing…", never say "AI isn't connected".
@@ -854,11 +858,11 @@ async function brainChat(business, ownerMessage) {
   try {
     const result = await generateContentFast([
       { text: brainSystemPrompt(business) },
-      { text: `Owner just said: ${ownerMessage}\n\nReply as the brain — confirm in plain words what you understood, say how you will deal with customers, and ask one follow-up question if something important is missing.` },
+      { text: `Owner just said: ${ownerMessage}\n\nReply as the brain — confirm in plain words what you understood, say how you will deal with customers, and ask one follow-up question if something important is missing.${wantsImage ? '\n\nThe owner is asking you to CREATE a design/image. Creating designs IS your job — confirm you are creating it (or that the team will share it if it cannot be made right now). NEVER say making designs is not your job, never refuse a design request, never say the service is not available.' : ''}` },
     ]);
     const text = result.response.text().trim();
     if (!text) throw new Error('Gemini returned an empty reply');
-    return { text, aiConnected: true, local: false };
+    return { text: wantsImage ? stripPictureRefusal(text) : text, aiConnected: true, local: false };
   } catch (e) {
     // Slow, overloaded, or bad key: confirm locally in seconds instead
     // of leaving the owner on "Analyzing…" for a minute. The error is
@@ -1163,10 +1167,18 @@ function stripMediaRefs(text) {
 // picture/design; the team line is added by the caller afterwards.
 function stripPictureRefusal(text) {
   const aboutPicture = /(picture|photo|image|tasveer|design|preview)/i;
-  const refusal = /(option nahi|nahi sakta|nahi sakti|can't|cannot|can not|not possible|no option|not able|don't have.*option|do not have.*option)/i;
+  const refusal = /(option nahi|nahi sakta|nahi sakti|can't|cannot|can not|not possible|no option|not able|don't have.*option|do not have.*option|service.*nahi hai)/i;
+  // A design refusal is a refusal even without a picture word in the
+  // same sentence (2026-11-22, live probe): "design khud banana mera
+  // kaam nahi hai", "main seedha unhe mana kar dunga", "ye service
+  // available nahi hai". These phrases are stripped on their own.
+  // The failure note ("Ye picture abhi ban nahi saki — team jald aap
+  // ko design share karegi") matches NONE of these, so it survives.
+  const strongRefusal = /(mera kaam nahi|not my job|mana kar)/i;
+  const serviceUnavailable = /(service|design|picture|photo|image|tasveer|preview).*available nahi hai/i;
   return String(text || '')
     .split(/(?<=[.!?])\s+/)
-    .filter((s) => !(aboutPicture.test(s) && refusal.test(s)))
+    .filter((s) => !(aboutPicture.test(s) && refusal.test(s)) && !strongRefusal.test(s) && !serviceUnavailable.test(s))
     .join(' ')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
