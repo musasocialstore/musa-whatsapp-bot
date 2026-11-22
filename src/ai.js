@@ -1049,10 +1049,14 @@ function buildImagePrompt(business, customerText, history) {
   const convo = (history || []).slice(-6).map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${String(h.text || '').slice(0, 200)}`).join(' | ');
   const want = String(customerText || '').slice(0, 300);
   const isWebsite = /website|web|site|e-?commerce|restaurant|store|shop/i.test((s.category || '') + ' ' + (s.services || []).join(' ') + ' ' + want);
+  // (2026-11-22, Zaib: the first preview came back as a car photo
+  // with a photo section, not a website UI.) A website preview must
+  // be a real UI mockup — header, nav, product grid with prices — and
+  // must NOT have a large photo hero or any car/vehicle photo.
   const subject = isWebsite
-    ? 'a modern, clean, professional website homepage UI design mockup'
+    ? 'a modern, clean, professional e-commerce website homepage UI design mockup: header with logo and navigation menu, hero banner with headline text, product grid with product cards showing name and price, footer, flat UI design, no large photo hero section, no photographs, no cars, no vehicles'
     : 'a clean, professional product / service image for this business';
-  return `Create ${subject} for ${bits.join(' ') || 'this business'}. Customer asked: "${want}". ${convo ? `Conversation so far: ${convo}. ` : ''}High quality, realistic, professional, mobile-friendly layout, soft pleasant colors, no spelling mistakes in any text on the image.`;
+  return `Create ${subject} for ${bits.join(' ') || 'this business'}. Customer asked: "${want}". ${convo ? `Conversation so far: ${convo}. ` : ''}High quality, professional, mobile-friendly layout, soft pleasant colors, no spelling mistakes in any text on the image.`;
 }
 async function generateCustomerImage(business, customerText, history) {
   const key = process.env.GEMINI_API_KEY;
