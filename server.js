@@ -29,6 +29,7 @@ const store = require('./src/store');
 const whatsapp = require('./src/whatsapp');
 const leads = require('./src/leads');
 const ai = require('./src/ai');
+const linkSetup = require('./src/linkSetup');
 const bulk = require('./src/bulk');
 const { execFile } = require('child_process');
 const os = require('os');
@@ -290,6 +291,25 @@ function isBrainDeleteAll(message) {
   return BRAIN_DELETE_WORDS.test(m) && (BRAIN_DELETE_ALL_WORDS.test(m) || /new data/i.test(m));
 }
 
+// --- 2b. Setup from link (2026-11-22, Zaib): paste a website /
+// Facebook / Instagram link — the board reads it and fills the brain
+// itself. MERGE, never wipe: the facts are appended to the brain, the
+// owner's existing prompt, memory and summary stay untouched. Brain
+// Chat keeps working alongside it.
+app.post('/api/business/:id/brain/setup-from-link', async (req, res) => {
+  const id = businessId(req);
+  const business = store.getBusiness(id);
+  const url = String((req.body || {}).url || '').trim();
+  if (!url) return res.status(400).json({ error: 'url is required — paste your website, Facebook or Instagram link' });
+  try {
+    const out = await linkSetup.setupFromLink(business, url);
+    store.saveBusiness(business);
+    res.json({ ok: true, url: out.url, facts: out.facts, brainMemory: business.brainMemory, brainSummary: business.brainSummary || null });
+  } catch (e) {
+    res.status(400).json({ error: String((e && e.message) || e) });
+  }
+});
+
 app.post('/api/business/:id/brain/chat', async (req, res) => {
   const business = store.getBusiness(businessId(req));
   seedBrain(business);
@@ -317,15 +337,46 @@ app.post('/api/business/:id/brain/chat', async (req, res) => {
   }
   business.brainMemory = business.brainMemory || [];
   business.brainMemory.push({ role: 'owner', text: message, at: new Date().toISOString() });
-  const out = await ai.brainChat(business, message);
-  business.brainMemory.push({ role: 'brain', text: out.text, at: new Date().toISOString() });
+  // The owner asked for a design / picture (2026-11-22, Zaib): the
+  // brain makes it with the same generator the customer bot uses, in
+  // parallel with the text reply so the owner never waits twice. The
+  // picture is saved as customer media and shown in the chat.
+  const imageRequest = ai.detectImageRequest(message);
+  const historyForImage = business.brainMemory.slice(-6).map((m) => ({ role: m.role === 'owner' ? 'customer' : 'bot', text: m.text }));
+  const imagePromise = imageRequest
+    ? ai.generateCustomerImage(business, message, historyForImage).catch(() => ({ ok: false, reason: 'error' }))
+    : Promise.resolve(null);
+  const [out, generated] = await Promise.all([ai.brainChat(business, message), imagePromise]);
+  let replyText = out.text;
+  let imageUrl = null;
+  if (imageRequest) {
+    if (generated && generated.ok) {
+      const saved = ai.saveGeneratedImage(business, businessId(req), generated);
+      if (saved.ok) imageUrl = saved.url;
+    } else {
+      // No picture could be made (e.g. image quota finished): say so
+      // plainly and promise the team will share it — never the rude
+      // "I can't send a picture" wording, never a fake promise. The
+      // check looks for the team-share promise itself: the word
+      // "design" alone is not enough, the owner's own message often
+      // contains it ("mujhe design dikhao").
+      replyText = ai.stripPictureRefusal(replyText);
+      const note = ai.imageFailedNote(ai.detectLanguage(message));
+      if (!/team will share|team.*share/i.test(replyText)) replyText += ' ' + note;
+    }
+  }
+  business.brainMemory.push({ role: 'brain', text: replyText, at: new Date().toISOString() });
+  if (imageUrl) {
+    business.brainMemory.push({ role: 'brain', text: 'Maine aap ke liye ye design banaya hai:', at: new Date().toISOString() });
+  }
   business.brainMemory = business.brainMemory.slice(-100);
   // The distilled summary is a fast LOCAL parse (no AI call), so it is
   // refreshed after every chat message — AI reply or local confirmation.
   business.brainSummary = ai.distillBrainSummary(business);
   store.saveBusiness(business);
   res.json({
-    reply: out.text,
+    reply: replyText,
+    imageUrl,
     aiConnected: out.aiConnected,
     local: !!out.local,
     brainMemory: business.brainMemory,
