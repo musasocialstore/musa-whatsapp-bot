@@ -717,7 +717,7 @@ function isConfusingBrainMessage(ownerMessage, parsed) {
 // the owner actually said (this message, parsed) plus what the brain
 // already knows (for the one follow-up question). Never invents a
 // service, price or offer.
-function localBrainConfirmation(business, ownerMessage) {
+function localBrainConfirmation(business, ownerMessage, linkLearned) {
   const lang = detectLanguage(ownerMessage);
   const parsed = parseBusinessPrompt(ownerMessage, business.name);
   const known = distillBrainSummary(business || {});
@@ -738,6 +738,32 @@ function localBrainConfirmation(business, ownerMessage) {
       : 'What is your location?';
   }
   const ask = missingQ ? ' ' + missingQ : '';
+
+  // Link in the chat (2026-11-22, Zaib): the system already fetched the
+  // link — reply with what it taught you, never say you cannot open it.
+  if (linkLearned) {
+    if (linkLearned.ok) {
+      const f = linkLearned.facts || {};
+      const learned = [];
+      if (f.name) learned.push(`Business: ${f.name}`);
+      if (f.category) learned.push(`Category: ${f.category}`);
+      if (f.services && f.services.length) learned.push(`Services: ${f.services.slice(0, 4).join(', ')}`);
+      if (f.prices && f.prices.length) learned.push(`Rates: ${f.prices.slice(0, 4).join(', ')}`);
+      if (f.location) learned.push(`Location: ${f.location}`);
+      const body = learned.length ? learned.join(' — ') : 'Is link se koi saaf business details nahi mili';
+      return lang === 'ur'
+        ? `لنک سے یہ سیکھا: ${body}۔ اب میں اسی طرح ڈیل کروں گا۔`
+        : lang === 'roman-ur'
+          ? `Is link se ye seekha: ${body}. Ab main isi tarah deal karunga.`
+          : `Learned from this link: ${body}. I will deal with customers this way from now on.`;
+    }
+    const err = String(linkLearned.error || '').slice(0, 120);
+    return lang === 'ur'
+      ? `یہ لنک کھل نہیں سکا (${err}) — آپ تفصیل خود لکھ دیں، میں سیکھ لوں گا۔`
+      : lang === 'roman-ur'
+        ? `Ye link khul nahi saka (${err}) — aap details khud likh dein, main seekh lunga.`
+        : `This link could not be opened (${err}) — please paste the details yourself and I will learn them.`;
+  }
 
   if (intent === 'greeting') {
     if (lang === 'ur') return `السلام علیکم! آپ اپنے بزنس کے بارے میں بتائیں — آپ کیا بیچتے ہیں، ریٹ کیا ہیں، لوکیشن کیا ہے؟ میں سیکھ لوں گا اور بتاؤں گا کہ میں نے کیا سمجھا۔`;
@@ -814,6 +840,7 @@ function brainSystemPrompt(business) {
     mem ? `Your conversation with the owner so far (your memory):\n${mem}` : 'This is the start of your conversation with the owner.',
     mediaList ? `Media the owner uploaded (with what the AI saw in each file, if analysed):\n${mediaList}` : 'No media uploaded yet.',
     'Never claim you analysed something you did not, and never invent services, prices or offers.',
+    'Links: when the owner shares a website / Facebook / Instagram link, the system opens it and reads it for you — you DO see what is inside. NEVER say you cannot open links, cannot see inside a website, or need the owner to tell you what is on the page. Reply with what the link taught you.',
   ].join('\n');
 }
 
@@ -843,22 +870,42 @@ function distillBrainSummary(business) {
   };
 }
 
-async function brainChat(business, ownerMessage) {
+async function brainChat(business, ownerMessage, linkLearned) {
   // The owner asked for a design / picture (2026-11-22, Zaib: NO
   // picture creation at all — the picture section was deleted from the
   // update). The brain does NOT create or send pictures: it says the
   // team will share the design. It must never write "I can't" /
   // "mere paas option nahi hai" — just the team line, in plain words.
+  // Link in the chat (2026-11-22, Zaib): when the owner pastes a link,
+  // the server fetches it FIRST (see server.js) and passes what it
+  // learned here — the brain replies with those facts and must NEVER
+  // say it cannot open links or see inside a website.
   const wantsImage = detectImageRequest(ownerMessage);
   if (!isAiConfigured()) {
     // No key: confirm locally in seconds — never make the owner wait
     // on "Analyzing…", never say "AI isn't connected".
-    return { text: localBrainConfirmation(business, ownerMessage), aiConnected: false, local: true };
+    return { text: localBrainConfirmation(business, ownerMessage, linkLearned), aiConnected: false, local: true };
   }
   try {
+    const linkNote = linkLearned
+      ? (linkLearned.ok
+        ? (() => {
+          const f = linkLearned.facts || {};
+          const learnedLines = [];
+          if (f.name) learnedLines.push(`Business: ${f.name}`);
+          if (f.category) learnedLines.push(`Category: ${f.category}`);
+          if (f.services && f.services.length) learnedLines.push(`Services: ${f.services.join(', ')}`);
+          if (f.prices && f.prices.length) learnedLines.push(`Rates: ${f.prices.join(', ')}`);
+          if (f.deals && f.deals.length) learnedLines.push(`Deals: ${f.deals.join(', ')}`);
+          if (f.location) learnedLines.push(`Location: ${f.location}`);
+          if (f.contact) learnedLines.push(`Contact: ${f.contact}`);
+          return `\n\nThe system already opened the link the owner shared (${linkLearned.url || 'the link'}) and learned this from it:\n${learnedLines.join('\n') || 'No clear business details came from the link.'}\nReply with what you learned from the link — name, what they sell, rates — in plain words. NEVER say you cannot open links or cannot see inside a website — the system reads links for you.`;
+        })()
+        : `\n\nThe link the owner shared could not be opened (${linkLearned.error || 'unknown reason'}). Say so plainly in your own words and ask the owner to paste the details. Never say you cannot open links in general — this one link just failed.`)
+      : '';
     const result = await generateContentFast([
       { text: brainSystemPrompt(business) },
-      { text: `Owner just said: ${ownerMessage}\n\nReply as the brain — confirm in plain words what you understood, say how you will deal with customers, and ask one follow-up question if something important is missing.${wantsImage ? '\n\nThe owner is asking for a design/picture. You do NOT create or send pictures — say the team will share the design with them soon and confirm the final one. Never write "I can\'t", "mere paas option nahi hai", or anything like that — just the team line.' : ''}` },
+      { text: `Owner just said: ${ownerMessage}\n\nReply as the brain — confirm in plain words what you understood, say how you will deal with customers, and ask one follow-up question if something important is missing.${linkNote}${wantsImage ? '\n\nThe owner is asking for a design/picture. You do NOT create or send pictures — say the team will share the design with them soon and confirm the final one. Never write "I can\'t", "mere paas option nahi hai", or anything like that — just the team line.' : ''}` },
     ]);
     const text = result.response.text().trim();
     if (!text) throw new Error('Gemini returned an empty reply');
@@ -868,7 +915,7 @@ async function brainChat(business, ownerMessage) {
     // of leaving the owner on "Analyzing…" for a minute. The error is
     // logged server-side only — the owner just gets the confirmation.
     console.error('Brain chat fast path failed, confirming locally:', e && e.message);
-    return { text: localBrainConfirmation(business, ownerMessage), aiConnected: false, local: true, error: String((e && e.message) || e) };
+    return { text: localBrainConfirmation(business, ownerMessage, linkLearned), aiConnected: false, local: true, error: String((e && e.message) || e) };
   }
 }
 
