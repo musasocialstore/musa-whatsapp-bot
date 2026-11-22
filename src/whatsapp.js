@@ -50,8 +50,16 @@ function clearReconnect(businessId) {
 // (restartRequired) and expects the companion to reconnect with the now
 // REGISTERED creds to finish logging in. The previous version never
 // reconnected, so a code the phone accepted could never become a linked
-// session. Reconnect (with a small cap) whenever a registered identity's
-// socket drops for a non-logout reason.
+// session. Reconnect whenever a registered identity's socket drops for a
+// non-logout reason — FOREVER, with backoff (2026-11-22, Zaib: the
+// socket died silently at ~16:10 PKT, sends failed 428 "Connection
+// Closed" while the board still said linked, and the old hard cap of 5
+// attempts meant the bot could stay dead forever with no retry at all).
+function reconnectDelayMs(attempts) {
+  // 2s, 4s, 8s, 16s, then 30s forever.
+  return Math.min(30000, 2000 * Math.pow(2, Math.min(Math.max(attempts - 1, 0), 4)));
+}
+
 function scheduleReconnect(businessId) {
   // Never reconnect while a pairing attempt is in flight for this
   // business: the pairing socket is the only socket that may exist, and
@@ -60,13 +68,65 @@ function scheduleReconnect(businessId) {
   if (pairingInFlight.has(businessId)) return;
   if (reconnectTimers.has(businessId)) return;
   const attempts = (reconnectAttempts.get(businessId) || 0) + 1;
-  if (attempts > 5) return;
   reconnectAttempts.set(businessId, attempts);
+  const delayMs = reconnectDelayMs(attempts);
+  console.error(`WhatsApp socket down for ${businessId} — reconnecting in ${delayMs / 1000}s (attempt ${attempts})`);
   const timer = setTimeout(() => {
     reconnectTimers.delete(businessId);
     startSocket(businessId).catch((e) => console.error('reconnect failed', e));
-  }, 2000);
+  }, delayMs);
   reconnectTimers.set(businessId, timer);
+}
+
+// The socket died WITHOUT a connection.update 'close' event (2026-11-22:
+// sends failed 428 while session.connected stayed true, so no close
+// handler ever ran and no reconnect was ever scheduled). Mark it dead
+// and start a FRESH reconnect cycle (attempts reset, so the first retry
+// comes in 2s, not after a stale backoff).
+function markSocketDead(businessId) {
+  const session = sessions.get(businessId);
+  if (session) {
+    session.connected = false;
+    sessions.set(businessId, session);
+  }
+  reconnectAttempts.delete(businessId);
+  scheduleReconnect(businessId);
+}
+
+// Wait until the socket is live again (a reconnect's 'open'), or the
+// timeout runs out. Used to retry a customer reply after a dead socket.
+async function waitForLiveSocket(businessId, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 25000);
+  while (Date.now() < deadline) {
+    if (isLiveLinked(businessId)) return true;
+    await sleep(500);
+  }
+  return isLiveLinked(businessId);
+}
+
+// Silent-death watchdog (2026-11-22, Zaib): the ONLY thing that used
+// to notice a dead socket was a connection.update 'close' event — and
+// on 2026-11-22 the socket died without one ever firing, so the board
+// kept saying linked while every reply failed. Every 20s, check every
+// session that claims to be live: if its WebSocket is not open, the
+// socket is dead — mark it and reconnect. One interval for the whole
+// process; sessions that are gone (disconnected) are simply skipped.
+let socketWatchdog = null;
+function checkSocketLiveness() {
+  for (const [businessId, session] of sessions) {
+    if (!session || !session.sock || session.connected !== true) continue;
+    let open = false;
+    try { open = session.sock.ws && session.sock.ws.isOpen === true; } catch (_) { open = false; }
+    if (!open) {
+      console.error(`WhatsApp socket for ${businessId} is silently dead (ws not open while connected=true) — reconnecting`);
+      markSocketDead(businessId);
+    }
+  }
+}
+function startSocketWatchdog() {
+  if (socketWatchdog) return;
+  socketWatchdog = setInterval(checkSocketLiveness, 20000);
+  if (socketWatchdog.unref) socketWatchdog.unref();
 }
 
 function isRegistered(businessId) {
@@ -248,6 +308,7 @@ async function startSocket(businessId) {
     pairingExpiresAt: prev ? prev.pairingExpiresAt : null,
   });
   attachHandlers(businessId, sock);
+  startSocketWatchdog();
   return sock;
 }
 
@@ -464,6 +525,7 @@ function attachHandlers(businessId, sock) {
     const { connection, lastDisconnect } = update;
     const session = getSession(businessId);
     if (connection === 'open') {
+      console.log('WhatsApp connected for', businessId);
       reconnectAttempts.delete(businessId);
       session.status = 'linked';
       session.connected = true;
@@ -476,6 +538,7 @@ function attachHandlers(businessId, sock) {
       sessions.set(businessId, session);
     } else if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
+      console.error('WhatsApp connection closed for', businessId, 'code', code);
       // The socket is dead from here on, whatever the stored status was.
       session.connected = false;
       if (code === DisconnectReason.loggedOut) {
@@ -735,22 +798,47 @@ async function handleIncoming(businessId, sock, msg) {
   // human line for that file — the owner's caption is written to teach
   // the BRAIN, and must never be sent to the customer (2026-11-21).
   // Human-like: typing indicator + 3–8s wait BEFORE anything is sent.
-  await sendHumanLike(sock, fromJid, reply.text, async () => {
-    if (reply.mediaId) {
-      const media = (business.media || []).find((m) => m.id === reply.mediaId);
-      if (media) {
-        const filePath = path.join(store.DATA_DIR, 'uploads', businessId, media.filename);
-        if (fs.existsSync(filePath)) {
-          const buffer = fs.readFileSync(filePath);
-          const mediaCaption = ai.mediaIntroText(media, ai.detectLanguage(text));
-          if (media.kind === 'image') await sock.sendMessage(fromJid, { image: buffer, caption: mediaCaption });
-          else if (media.kind === 'video') await sock.sendMessage(fromJid, { video: buffer, caption: mediaCaption });
-          else if (media.kind === 'audio') await sock.sendMessage(fromJid, { audio: buffer, ptt: true });
+  try {
+    await sendHumanLike(sock, fromJid, reply.text, async () => {
+      if (reply.mediaId) {
+        const media = (business.media || []).find((m) => m.id === reply.mediaId);
+        if (media) {
+          const filePath = path.join(store.DATA_DIR, 'uploads', businessId, media.filename);
+          if (fs.existsSync(filePath)) {
+            const buffer = fs.readFileSync(filePath);
+            const mediaCaption = ai.mediaIntroText(media, ai.detectLanguage(text));
+            if (media.kind === 'image') await sock.sendMessage(fromJid, { image: buffer, caption: mediaCaption });
+            else if (media.kind === 'video') await sock.sendMessage(fromJid, { video: buffer, caption: mediaCaption });
+            else if (media.kind === 'audio') await sock.sendMessage(fromJid, { audio: buffer, ptt: true });
+          }
         }
       }
+      await sock.sendMessage(fromJid, { text: reply.text });
+    });
+  } catch (e) {
+    // The socket died while sending (2026-11-22, Zaib: the customer
+    // saw "typing…" and then nothing — sendMessage threw Boom 428
+    // "Connection Closed" while the board still said linked, and the
+    // reply silently vanished). The reply must not vanish: mark the
+    // socket dead, reconnect, and send the SAME reply once the new
+    // socket is live. Text only on the retry — the media may already
+    // have gone out, and a second picture would double-send it.
+    console.error('Customer reply send failed, reconnecting + retrying:', (e && e.message) || e);
+    markSocketDead(businessId);
+    try {
+      const live = await waitForLiveSocket(businessId, 25000);
+      const liveSession = sessions.get(businessId);
+      if (live && liveSession && liveSession.sock) {
+        await sendHumanLike(liveSession.sock, fromJid, reply.text, async () => {
+          await liveSession.sock.sendMessage(fromJid, { text: reply.text });
+        });
+      } else {
+        console.error('Customer reply retry skipped: socket did not come back live in time');
+      }
+    } catch (e2) {
+      console.error('Customer reply retry failed:', (e2 && e2.message) || e2);
     }
-    await sock.sendMessage(fromJid, { text: reply.text });
-  });
+  }
 
   // Confirmation flow: when the customer has fully confirmed their
   // order, the bot says so in the team's words and the conversation
@@ -841,4 +929,4 @@ async function disconnect(businessId) {
   try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
 }
 
-module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions };
+module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
