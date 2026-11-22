@@ -761,27 +761,35 @@ function localBrainConfirmation(business, ownerMessage) {
     : lang === 'roman-ur'
       ? 'Main aise deal karunga: customer jo bhi puche, main inhi details se jawab dunga, aur jab customer confirm kare to main aap ko us ki details bhej dunga.'
       : 'This is how I will deal with customers: whatever they ask, I will answer from these details, and when a customer confirms, I will send you their details.';
+  // Vary the opening + closing every reply (2026-11-22, Zaib): the
+  // brain used to answer every message with the same fixed line
+  // ("maine aapka system samajh liya" / "bhai done, tera kaam ho
+  // jayega") — that permanent message must never come again. The
+  // rotation is deterministic (memory length), so tests stay stable.
+  const n = ((business.brainMemory || []).length) % 3;
+  const open = lang === 'ur'
+    ? ['سمجھ گیا', 'ٹھیک ہے، نوٹ کر لیا', 'مل گیا'][n]
+    : lang === 'roman-ur'
+      ? ['Han bhai, samajh aa gaya!', 'Theek hai, note kar liya —', 'Mil gaya —'][n]
+      : ['Got it —', 'Noted —', 'Understood —'][n];
+  const ready = lang === 'ur'
+    ? ['میں تیار ہوں۔', 'اب میں اسی طرح ڈیل کروں گا۔', 'چلو، اب میں سنبھال لوں گا۔'][n]
+    : lang === 'roman-ur'
+      ? ['Main tayyar hun.', 'Ab main isi tarah deal karunga.', 'Chalo, ab main sambhal lunga.'][n]
+      : ['I am ready.', 'I will deal with customers this way now.', 'I have got this.'][n];
+
   if (bits.length) {
-    const ready = lang === 'ur'
-      ? 'بھائی ڈن، تیرا کام ہو جائے گا — میں تیرے لیے تیار ہوں۔'
-      : lang === 'roman-ur'
-        ? 'Bhai done, tera kaam ho jayega — main tere liye tayyar hun.'
-        : 'Done, brother — your work will be handled, I am ready for you.';
-    if (lang === 'ur') return `سمجھ گیا — ${bits.join('۔ ')}۔ ${dealLine}${ask} ${ready}`;
-    if (lang === 'roman-ur') return `Han bhai, samajh aa gaya! ${bits.join('. ')}. ${dealLine}${ask} ${ready}`;
-    return `Got it — I understand! ${bits.join('. ')}. ${dealLine}${ask} ${ready}`;
+    if (lang === 'ur') return `${open} — ${bits.join('۔ ')}۔ ${dealLine}${ask} ${ready}`;
+    if (lang === 'roman-ur') return `${open} ${bits.join('. ')}. ${dealLine}${ask} ${ready}`;
+    return `${open} ${bits.join('. ')}. ${dealLine}${ask} ${ready}`;
   }
   // No parseable facts in this message — echo the owner's own words
   // and remember them, instead of guessing.
   const echo = String(ownerMessage).length > 140 ? String(ownerMessage).slice(0, 140) + '…' : String(ownerMessage);
-  const readyEcho = lang === 'ur'
-    ? 'بھائی ڈن، تیرا کام ہو جائے گا — میں تیرے لیے تیار ہوں۔'
-    : lang === 'roman-ur'
-      ? 'Bhai done, tera kaam ho jayega — main tere liye tayyar hun.'
-      : 'Done, brother — your work will be handled, I am ready for you.';
-  if (lang === 'ur') return `سمجھ گیا — آپ نے یہ بتایا: "${echo}"۔ میں یہ یاد رکھوں گا۔${ask} ${readyEcho}`;
-  if (lang === 'roman-ur') return `Samajh gaya — aap ne ye bataya: "${echo}". Main ye yaad rakhunga.${ask} ${readyEcho}`;
-  return `Understood — you told me: "${echo}". I will remember that.${ask} ${readyEcho}`;
+  const readyEcho = ready;
+  if (lang === 'ur') return `${open} — آپ نے یہ بتایا: "${echo}"۔ میں یہ یاد رکھوں گا۔${ask} ${readyEcho}`;
+  if (lang === 'roman-ur') return `${open} aap ne ye bataya: "${echo}". Main ye yaad rakhunga.${ask} ${readyEcho}`;
+  return `${open} you told me: "${echo}". I will remember that.${ask} ${readyEcho}`;
 }
 
 function brainSystemPrompt(business) {
@@ -794,9 +802,8 @@ function brainSystemPrompt(business) {
     .join('\n');
   return [
     'You are the BRAIN of a small business\'s WhatsApp assistant. The business owner is teaching you about their business by chatting with you. Your job: listen, understand, remember, and confirm your understanding in plain, simple words.',
-    'When the owner tells you something new, reply with a short confirmation that shows you really understood it, in this shape:',
-    'BEGIN your reply by confirming you fully understood the owner\'s whole system — e.g. "Samajh gaya — maine aapka system pura samajh liya hai, main aise deal karunga: ..." — and then explain, one by one, how you will deal with each kind of customer, exactly as you will do it in the real chats.',
-    'END your confirmation with a warm, ready line like "bhai done, tera kaam ho jayega — main tere liye tayyar hun" (in the owner\'s language).',
+    'When the owner tells you something new, reply with a short confirmation that proves you really understood it — restate the SPECIFIC facts you just learned (business, services, prices, deals, location) in your own words, and say how you will deal with customers from those facts.',
+    'NEVER use a fixed confirmation line. Never start with "maine aapka system samajh liya" (or any version of it), and never end with the same fixed ready line every time — vary your words in every reply, like a real person would. A confirmation that only says you understood, without the specific facts, is useless.',
     '- What kind of business it is (category).',
     '- What they sell / their services, their prices / rate list, their location — only what the owner actually told you, never invent anything.',
     '- "If a customer says X, I will say Y" — one or two examples of how you will deal with customers.',

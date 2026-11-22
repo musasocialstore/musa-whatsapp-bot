@@ -252,6 +252,40 @@ function parseLead(business, customerJid, text, opts) {
   };
 }
 
+// The brain designs the alert for the business it serves (2026-11-22,
+// Zaib): it first decides what the business IS, then the alert carries
+// the fields that matter for THAT business. For a web developer the
+// website type comes FIRST — then name, real number, what they want,
+// agreed price. Other businesses keep the short generic shape.
+function detectBusinessCategory(business) {
+  const hay = [
+    (business && business.prompt) || '',
+    ((business && business.brainMemory) || []).filter((m) => m.role === 'owner').map((m) => m.text).join('\n'),
+    (business && business.name) || '',
+  ].join('\n').toLowerCase();
+  if (/(website|web development|web design)/.test(hay)) return 'Website development';
+  if (/(food|restaurant|burger|pizza|kfc|chicken)/.test(hay)) return 'Food / restaurant';
+  if (/(smm|social media|followers|accounts)/.test(hay)) return 'Social media services';
+  if (/(course|academy|teacher|tuition)/.test(hay)) return 'Education / courses';
+  if (/(cloth|fashion|shoes|dress)/.test(hay)) return 'Fashion / clothing';
+  return 'General business';
+}
+
+function extractWebsiteType(wants) {
+  const w = String(wants || '').toLowerCase();
+  if (/(e-?commerce|online store|selling point|shop|store)/.test(w)) return 'E-commerce website';
+  if (/(restaurant|cafe)/.test(w)) return 'Restaurant website';
+  // "pizza" / "food" / "menu" alone is a food order, not a website —
+  // only a restaurant website when a website word is there too.
+  if (/(food|pizza|menu)/.test(w) && /website|web|site/.test(w)) return 'Restaurant website';
+  if (/(portfolio|personal|resume|\bcv\b)/.test(w)) return 'Portfolio website';
+  if (/(blog|news|article)/.test(w)) return 'Blog website';
+  if (/(landing)/.test(w)) return 'Landing page';
+  if (/(business|company|corporate|agency)/.test(w)) return 'Business website';
+  if (/website|web|site/.test(w)) return 'Website (type not clear yet)';
+  return '';
+}
+
 // SHORT owner alert — the SAME text goes to email and WhatsApp. Only:
 // name, number, what they want, address (if given), agreed price, and
 // the email the customer typed (if any — WhatsApp profiles have no
@@ -261,6 +295,10 @@ function parseLead(business, customerJid, text, opts) {
 // No full conversation, no middle deal details, no timestamps.
 function leadText(business, lead) {
   const lines = [`New lead — ${lead.businessName}`];
+  if (detectBusinessCategory(business) === 'Website development') {
+    const type = extractWebsiteType(lead.wants);
+    if (type) lines.push(`Website: ${type}`);
+  }
   lines.push(`Name: ${lead.customerName || '—'}`);
   if (lead.numberIsLid && !lead.customerNumber) lines.push('Number: (WhatsApp ID only — ask the customer for their number)');
   else if (lead.numberIsLid) lines.push(`Number: ${lead.customerNumber} (WhatsApp ID — confirm the real number with the customer)`);
@@ -311,6 +349,11 @@ async function forwardLead(business, lead, sendFn) {
 
 async function captureAndForward(business, customerJid, text, sendFn, opts) {
   const lead = parseLead(business, customerJid, text, opts);
+  // The alert goes ONLY after the customer confirms (2026-11-22, Zaib:
+  // the bot says the team line, the customer says "han theek hai",
+  // THEN the lead message comes). A lead-looking message only SAVES
+  // the lead — pass {forward:false} — no alert until confirmation.
+  const forward = !opts || opts.forward !== false;
   // No duplicate alerts (2026-11-21, Zaib): one customer produced 7
   // alerts in one day because every message re-captured the same lead.
   // If the same customer already has a lead from the last 6 hours with
@@ -319,13 +362,40 @@ async function captureAndForward(business, customerJid, text, sendFn, opts) {
   const prev = (store.listLeads(business.id) || [])
     .filter((l) => l.customerNumber === lead.customerNumber)
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+  const prevForwarded = !!(prev && (prev.forwardedEmail || prev.forwardedWhatsapp));
   if (prev && Date.now() - new Date(prev.createdAt).getTime() < 6 * 60 * 60 * 1000) {
     const sameDetails = prev.wants === lead.wants && prev.price === lead.price;
-    if (!lead.wants || sameDetails) {
+    if (prevForwarded && (!lead.wants || sameDetails)) {
       return { lead: prev, skipped: true, reason: 'duplicate lead — same customer, same details, already alerted' };
+    }
+    // Saved but never alerted — update THAT same row with the richer
+    // details and alert it now (confirm path) or refresh it silently
+    // (still unconfirmed), instead of a second row for one customer.
+    if (!prevForwarded) {
+      const updated = store.updateLead(business.id, prev.id, {
+        customerName: lead.customerName || prev.customerName,
+        wants: lead.wants || prev.wants,
+        price: lead.price || prev.price,
+        address: lead.address || prev.address,
+        email: lead.email || prev.email,
+        rawText: lead.rawText || prev.rawText,
+      });
+      if (!forward) {
+        return { lead: updated, skipped: true, reason: 'saved, not alerted yet — waiting for customer confirmation' };
+      }
+      const result = await forwardLead(business, updated, sendFn);
+      store.updateLead(business.id, prev.id, {
+        forwardedEmail: result.forwardedEmail,
+        forwardedWhatsapp: result.forwardedWhatsapp,
+        forwardLog: result.log,
+      });
+      return { lead: { ...updated, forwardedEmail: result.forwardedEmail, forwardedWhatsapp: result.forwardedWhatsapp, forwardLog: result.log }, email: result.email, whatsapp: result.whatsapp };
     }
   }
   store.addLead(lead); // assigns id + createdAt on `lead` itself
+  if (!forward) {
+    return { lead, skipped: true, reason: 'saved, not alerted yet — waiting for customer confirmation' };
+  }
   const result = await forwardLead(business, lead, sendFn);
   store.updateLead(business.id, lead.id, {
     forwardedEmail: result.forwardedEmail,
@@ -350,4 +420,4 @@ async function confirmLead(business, leadId, sendFn) {
   return { lead: updated, email: result.email, whatsapp: result.whatsapp };
 }
 
-module.exports = { looksLikeLead, parseLead, captureAndForward, confirmLead, forwardLead, sendLeadEmail, sendLeadWhatsapp, findAgreedPrice, extractWants, extractCustomerName, extractAddress, extractPhoneNumber, extractEmail, customerOnlyText, leadText };
+module.exports = { looksLikeLead, parseLead, captureAndForward, confirmLead, forwardLead, sendLeadEmail, sendLeadWhatsapp, findAgreedPrice, extractWants, extractCustomerName, extractAddress, extractPhoneNumber, extractEmail, customerOnlyText, leadText, detectBusinessCategory, extractWebsiteType };

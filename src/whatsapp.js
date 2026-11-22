@@ -795,7 +795,10 @@ async function handleIncoming(businessId, sock, msg) {
     const historyText = history.map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${h.text}`).join('\n');
     await leads.captureAndForward(business, fromJid, historyText, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid });
   } else if (leads.looksLikeLead(text, business)) {
-    await leads.captureAndForward(business, fromJid, text, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid });
+    // Lead-looking message but NO confirmation yet (2026-11-22, Zaib:
+    // the alert comes only after the customer says "han theek hai") —
+    // save the lead so nothing is lost, but send no alert.
+    await leads.captureAndForward(business, fromJid, text, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid, forward: false });
   }
 }
 
