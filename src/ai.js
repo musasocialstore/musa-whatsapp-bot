@@ -617,20 +617,18 @@ function buildSystemPrompt(business, media) {
 // to keep working.
 async function generateReply(business, customerText, history, opts) {
   const media = (business && business.media) || [];
-  // Design preview (2026-11-21, Zaib): when the customer asks to SEE a
-  // design, NO stored file is ever attached as the "design" — the
-  // generated preview (or nothing, with the team line) is the answer.
-  // A stored plans poster sent as a design is exactly what went wrong
-  // in the 11:11 PM chat with Zaib JUTT Gondal.
+  // Design request (2026-11-21, Zaib; pictures REMOVED 2026-11-22):
+  // when the customer asks to SEE a design, NO stored file is ever
+  // attached as the "design" — a stored plans poster sent as a design
+  // is exactly what went wrong in the 11:11 PM chat with Zaib JUTT
+  // Gondal. No picture is ever created here — the team shares it.
   const picked = opts && opts.imageRequest ? null : pickMedia(media, customerText);
   const lang = detectLanguage(customerText);
-  // Design preview (2026-11-21): the reply's words must match what
-  // actually happens — a picture is attached only when one was really
-  // made; otherwise the bot says the team will share the design.
+  // The reply's words must match what actually happens: no picture is
+  // made, the team shares the design — never promise one, never write
+  // "I can't" / "mere paas option nahi hai".
   const imageNote = opts && opts.imageRequest
-    ? (opts.imageReady
-      ? 'A design preview image has been made for this customer and WILL be attached to this reply — tell them in your own words that this is how it will look, and that the team will confirm the final design with them.'
-      : 'The customer asked to see a design, but no preview image could be made right now — do NOT promise a picture. NEVER say you cannot send a picture, that you have no option to send pictures, or that sending pictures is not possible here — never write "I can\'t", "mere paas option nahi hai", or anything like that. Just say the team will share the design with them soon and confirm the final design.')
+    ? 'The customer asked to see a design. No picture is created here — do NOT promise a picture. NEVER say you cannot send a picture, that you have no option to send pictures, or that sending pictures is not possible here — never write "I can\'t", "mere paas option nahi hai", or anything like that. Just say the team will share the design with them soon and confirm the final design.'
     : '';
   if (!isAiConfigured()) {
     // No Gemini key: answer from the business facts (see
@@ -846,9 +844,11 @@ function distillBrainSummary(business) {
 }
 
 async function brainChat(business, ownerMessage) {
-  // The owner asked for a design / picture (2026-11-22, live probe):
-  // creating designs IS the brain's job — it must never refuse ("design
-  // banana mera kaam nahi hai") or say the service is not available.
+  // The owner asked for a design / picture (2026-11-22, Zaib: NO
+  // picture creation at all — the picture section was deleted from the
+  // update). The brain does NOT create or send pictures: it says the
+  // team will share the design. It must never write "I can't" /
+  // "mere paas option nahi hai" — just the team line, in plain words.
   const wantsImage = detectImageRequest(ownerMessage);
   if (!isAiConfigured()) {
     // No key: confirm locally in seconds — never make the owner wait
@@ -858,7 +858,7 @@ async function brainChat(business, ownerMessage) {
   try {
     const result = await generateContentFast([
       { text: brainSystemPrompt(business) },
-      { text: `Owner just said: ${ownerMessage}\n\nReply as the brain — confirm in plain words what you understood, say how you will deal with customers, and ask one follow-up question if something important is missing.${wantsImage ? '\n\nThe owner is asking you to CREATE a design/image. Creating designs IS your job — confirm you are creating it (or that the team will share it if it cannot be made right now). NEVER say making designs is not your job, never refuse a design request, never say the service is not available.' : ''}` },
+      { text: `Owner just said: ${ownerMessage}\n\nReply as the brain — confirm in plain words what you understood, say how you will deal with customers, and ask one follow-up question if something important is missing.${wantsImage ? '\n\nThe owner is asking for a design/picture. You do NOT create or send pictures — say the team will share the design with them soon and confirm the final one. Never write "I can\'t", "mere paas option nahi hai", or anything like that — just the team line.' : ''}` },
     ]);
     const text = result.response.text().trim();
     if (!text) throw new Error('Gemini returned an empty reply');
@@ -1024,168 +1024,14 @@ function learnedQaSection(business) {
 // Honest failure: no key / model unavailable / timeout → {ok:false}
 // and the bot says the team will share the design — it never promises
 // a picture it cannot make.
-// Image models, tried in order. Live evidence (Railway logs, 2026-11-22
-// 00:01 + 00:02 PKT): gemini-2.5-flash-image answers 429 when its free
-// quota is out (the model EXISTS); gemini-2.0-flash-preview-image-
-// generation answers 404 "not found for API version v1beta" — that
-// model is DEAD, so it was removed. Its replacements are the current GA
-// image models (Google docs, Oct 2026): gemini-3.1-flash-image (Nano
-// Banana 2) and gemini-3-pro-image (Nano Banana Pro). Each model has
-// its own quota, so a 429 on one does not block the next.
-const IMAGE_MODELS = ['gemini-2.5-flash-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image'];
 const IMAGE_REQUEST_RE = /(design|ui|user interface|mockup|mock-up|layout|dikha|dikhao|dekha|dekhna|show me|show it|picture|photo|image|tasveer|kaisa (lagega|hoga|dikhega)|kesi (lagegi|hogi)|sample|preview|prototype)/i;
 function detectImageRequest(text) {
   const t = String(text || '').trim();
   if (t.length < 3) return false;
   return IMAGE_REQUEST_RE.test(t);
 }
-function buildImagePrompt(business, customerText, history) {
-  const s = distillBrainSummary(business);
-  const bits = [];
-  if (s.name) bits.push(`business "${s.name}"`);
-  if (s.category) bits.push(`(${s.category})`);
-  if (s.services && s.services.length) bits.push(`offering ${s.services.slice(0, 4).join(', ')}`);
-  if (s.deals && s.deals.length) bits.push(`deals: ${s.deals.slice(0, 3).join('; ')}`);
-  const convo = (history || []).slice(-6).map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${String(h.text || '').slice(0, 200)}`).join(' | ');
-  const want = String(customerText || '').slice(0, 300);
-  const isWebsite = /website|web|site|e-?commerce|restaurant|store|shop/i.test((s.category || '') + ' ' + (s.services || []).join(' ') + ' ' + want);
-  // (2026-11-22, Zaib: the first preview came back as a car photo
-  // with a photo section, not a website UI; the second came back as
-  // a PHOTO of a monitor on a desk, not a flat UI.) A website preview
-  // must be a flat full-screen UI screenshot — the whole image IS the
-  // website — with header, nav, product grid with prices, and must NOT
-  // show a monitor, desk, photo hero or any car/vehicle photo.
-  const subject = isWebsite
-    ? 'a modern, clean, professional e-commerce website homepage UI design mockup: the whole image IS the website interface, full-screen website screenshot, header with logo and navigation menu, hero banner with headline text, product grid with product cards showing name and price, footer, flat 2D UI design, no computer monitor, no device, no desk, no background objects, no large photo hero section, no photographs, no cars, no vehicles'
-    : 'a clean, professional product / service image for this business';
-  return `Create ${subject} for ${bits.join(' ') || 'this business'}. Customer asked: "${want}". ${convo ? `Conversation so far: ${convo}. ` : ''}High quality, professional, mobile-friendly layout, soft pleasant colors, no spelling mistakes in any text on the image.`;
-}
-async function generateCustomerImage(business, customerText, history) {
-  const key = process.env.GEMINI_API_KEY;
-  const imagePrompt = buildImagePrompt(business, customerText, history);
-  let lastReason = 'model-unavailable';
-  // 1. Gemini image models (free key) — try each in turn.
-  if (key && key !== 'YOUR_GEMINI_API_KEY_HERE') {
-    for (const model of IMAGE_MODELS) {
-      try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 45000);
-        let res;
-        try {
-          res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: imagePrompt }] }],
-              generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-            }),
-            signal: ctrl.signal,
-          });
-        } finally { clearTimeout(timer); }
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '');
-          console.error('Image generation failed:', model, res.status, errText.slice(0, 200));
-          // 404/400 = this model is not available for this key; 429/503
-          // = quota or overload; 403 = this model needs billing on this
-          // key — the NEXT model may have its own quota, so try it
-          // before giving up. (2026-11-21: the first request died on a
-          // 429 "quota exceeded" and the fallback was never tried, so
-          // the customer got no picture at all. 2026-11-22 00:01 PKT:
-          // the 429 WAS retried, but the fallback model itself 404d.)
-          lastReason = 'api-' + res.status;
-          continue;
-        }
-        const data = await res.json();
-        const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
-        const img = parts.find((p) => p.inlineData && /^image\//.test(p.inlineData.mimeType || ''));
-        if (!img) { lastReason = 'no-image-in-response'; continue; }
-        return { ok: true, buffer: Buffer.from(img.inlineData.data, 'base64'), mimeType: img.inlineData.mimeType || 'image/png', prompt: imagePrompt, provider: 'gemini' };
-      } catch (e) {
-        if (e && e.name === 'AbortError') { lastReason = 'timeout'; continue; }
-        console.error('Image generation error:', model, e && e.message);
-        lastReason = 'error';
-        continue;
-      }
-    }
-  } else {
-    lastReason = 'no-key';
-  }
-  // 2. Free no-key fallback (2026-11-22): Pollinations (Flux image
-  // model — no key, no account, no billing). The Gemini image quota is
-  // exhausted on this Google account even for a brand-new project +
-  // key: all three models 429 on the very first request (06:22 PKT),
-  // so without a second lane no picture can ever be made. If this
-  // lane also fails, the caller honestly says the team will share it.
-  try {
-    const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(imagePrompt) + '?width=1024&height=1024&model=flux&nologo=true';
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60000);
-    let res;
-    try {
-      res = await fetch(url, { signal: ctrl.signal });
-    } finally { clearTimeout(timer); }
-    if (res.ok) {
-      const type = String((res.headers && res.headers.get('content-type')) || '').split(';')[0].trim();
-      if (/^image\//.test(type)) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.length > 1000) return { ok: true, buffer: buf, mimeType: type || 'image/jpeg', prompt: imagePrompt, provider: 'pollinations' };
-      }
-      lastReason = 'pollinations-bad-response';
-    } else {
-      console.error('Image generation failed: pollinations', res.status);
-      lastReason = 'pollinations-' + res.status;
-    }
-  } catch (e) {
-    if (e && e.name === 'AbortError') lastReason = 'pollinations-timeout';
-    else { console.error('Image generation error: pollinations', e && e.message); lastReason = 'pollinations-error'; }
-  }
-  return { ok: false, reason: lastReason };
-}
-function designCaption(lang) {
-  const lines = {
-    en: 'Here is a preview of how it will look — the team will confirm the final design with you.',
-    ur: 'Ye preview hai — is tarah ka design hoga, final design team aap se confirm karke batayegi.',
-  };
-  return lines[lang] || lines.ur;
-}
 
-// Save a generated design preview as a customer media item (2026-11-22):
-// the picture lands in uploads/<businessId>/gen-<ts>.png and is listed
-// on the Media page, so the owner can send it to customers later.
-function saveGeneratedImage(business, businessId, generated) {
-  if (!generated || !generated.ok || !generated.buffer) return { ok: false, reason: 'no-image' };
-  try {
-    const dir = path.join(store.DATA_DIR, 'uploads', businessId);
-    fs.mkdirSync(dir, { recursive: true });
-    // Pollinations returns JPEG — save with the right extension so the
-    // file serves with the correct content-type (Gemini returns PNG).
-    const ext = /jpeg|jpg/.test(generated.mimeType || '') ? '.jpg' : '.png';
-    const filename = 'gen-' + Date.now() + ext;
-    fs.writeFileSync(path.join(dir, filename), generated.buffer);
-    const item = {
-      id: 'media_' + Date.now(), kind: 'image', filename, originalName: filename,
-      caption: 'AI-generated design preview for customer', useFor: 'design preview',
-      ownerNote: 'AI-generated preview — sent when a customer asks to see the design',
-      purpose: 'customer', description: 'AI-generated design preview for the customer.',
-      url: `/media/${encodeURIComponent(businessId)}/${encodeURIComponent(filename)}`,
-      createdAt: new Date().toISOString(),
-    };
-    business.media = business.media || [];
-    business.media.push(item);
-    return { ok: true, media: item, url: item.url };
-  } catch (e) {
-    console.error('Could not save generated image:', (e && e.message) || e);
-    return { ok: false, reason: 'save-failed' };
-  }
-}
 
-// The owner asked for a picture and none could be made (2026-11-22):
-// plain and honest — and never the rude "I can't send a picture /
-// mere paas option nahi hai" wording. The team line is the promise.
-function imageFailedNote(lang) {
-  if (lang === 'en') return 'This picture could not be made right now — the team will share the design with you soon and confirm the final one.';
-  return 'Ye picture abhi ban nahi saki — team jald aap ko design share karegi aur final confirm karegi.';
-}
 
 // Defensive strip (2026-11-21, Zaib): the AI once wrote the file name
 // "[image: file_00000000c2fc82118906104723582845.png]" into its reply
@@ -1227,4 +1073,4 @@ function stripPictureRefusal(text) {
     .trim();
 }
 
-module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs, stripPictureRefusal, learnFromCustomer, learnedQaSection, detectImageRequest, buildImagePrompt, generateCustomerImage, designCaption, saveGeneratedImage, imageFailedNote };
+module.exports = { generateReply, detectLanguage, detectIntent, pickMedia, fallbackReply, parseBusinessPrompt, classifyMedia, mediaIntroText, promptSummary, isAiConfigured, brainChat, distillBrainSummary, describeImage, describeCustomerImage, transcribeAudio, varyIfRepeat, generateContentFast, localBrainConfirmation, isConfusingBrainMessage, buildSystemPrompt, stripMediaRefs, stripPictureRefusal, learnFromCustomer, learnedQaSection, detectImageRequest };

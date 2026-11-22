@@ -690,19 +690,12 @@ async function handleIncoming(businessId, sock, msg) {
   const key = `${businessId}:${fromJid}`;
   const history = histories.get(key) || [];
   history.push({ role: 'customer', text });
-  // Design preview (2026-11-21, Zaib): if the customer asks to SEE a
-  // design / UI / picture, generate a real preview with Gemini and send
-  // the picture itself — never a file name. Generation runs BEFORE the
-  // text reply is written, so the words match what actually happens.
-  // The owner may have explained only 1%: the image prompt is built
-  // from the whole business understanding, so the preview matches the
-  // deal — "is tarah ka UI hoga, final team confirm karegi".
+  // Design request (2026-11-22, Zaib: NO picture creation at all —
+  // the picture section was deleted from the update). If the customer
+  // asks to SEE a design / UI / picture, no picture is made — the
+  // reply says the team will share the design (see ai.generateReply).
   const imageRequest = ai.detectImageRequest(text);
-  let generatedImage = null;
-  if (imageRequest) {
-    try { generatedImage = await ai.generateCustomerImage(business, text, history); } catch (e) { generatedImage = { ok: false, reason: 'error' }; }
-  }
-  const reply = await ai.generateReply(business, text, history, { imageRequest, imageReady: !!(generatedImage && generatedImage.ok) });
+  const reply = await ai.generateReply(business, text, history, { imageRequest });
   // Never send the identical reply twice in a row to the same chat —
   // the no-key fallback used to repeat verbatim ("Website create
   // karvani hai" twice -> same reply twice). Vary it instead.
@@ -711,16 +704,16 @@ async function handleIncoming(businessId, sock, msg) {
   // (2026-11-21: the AI wrote one into its text and the customer only
   // saw the name, not the picture). The real picture is attached above.
   reply.text = ai.stripMediaRefs(reply.text);
-  // A design was asked for but no preview could be made — never let a
-  // refusal ("mere paas direct picture bhejne ka option nahi hai" /
-  // "I can't send a picture") reach the customer (2026-11-22, 00:03
-  // PKT chat). The team line below is the honest answer instead.
-  if (imageRequest && !(generatedImage && generatedImage.ok)) {
+  // A design was asked for — never let a refusal ("mere paas direct
+  // picture bhejne ka option nahi hai" / "I can't send a picture")
+  // reach the customer (2026-11-22, 00:03 PKT chat). The team line
+  // below is the honest answer instead.
+  if (imageRequest) {
     reply.text = ai.stripPictureRefusal(reply.text);
   }
-  // Safety net: a design was asked for but no preview could be made —
-  // the customer still gets a clear promise that the team will share it.
-  if (imageRequest && !(generatedImage && generatedImage.ok) && !/design|team will share|team.*share/i.test(reply.text)) {
+  // Safety net: a design was asked for — the customer still gets a
+  // clear promise that the team will share it.
+  if (imageRequest && !/design|team will share|team.*share/i.test(reply.text)) {
     reply.text += ' ' + (ai.detectLanguage(text) === 'en'
       ? 'The team will share the design with you soon and confirm the final one.'
       : 'Team jald aap ko design share karegi aur final confirm karegi.');
@@ -729,25 +722,6 @@ async function handleIncoming(businessId, sock, msg) {
   histories.set(key, history.slice(-20));
   lastReplyByChat.set(key, reply.text);
 
-  // Save the generated preview as a customer media item (visible on the
-  // Media page, re-usable for the next customer who asks the same thing).
-  if (generatedImage && generatedImage.ok) {
-    try {
-      const dir = path.join(store.DATA_DIR, 'uploads', businessId);
-      fs.mkdirSync(dir, { recursive: true });
-      const filename = 'gen-' + Date.now() + '.png';
-      fs.writeFileSync(path.join(dir, filename), generatedImage.buffer);
-      business.media = business.media || [];
-      business.media.push({
-        id: 'media_' + Date.now(), kind: 'image', filename, originalName: filename,
-        caption: 'AI-generated design preview for customer', useFor: 'design preview',
-        ownerNote: 'AI-generated preview — sent when a customer asks to see the design',
-        purpose: 'customer', description: 'AI-generated design preview for the customer.',
-        url: `/media/${encodeURIComponent(businessId)}/${encodeURIComponent(filename)}`,
-        createdAt: new Date().toISOString(),
-      });
-    } catch (e) { console.error('Could not save generated image:', e && e.message); }
-  }
   // Learn from this customer chat (2026-11-21, Zaib): the brain
   // remembers the question + its own answer, so the next customer who
   // asks the same thing gets the learned answer. Personal data is
@@ -762,12 +736,7 @@ async function handleIncoming(businessId, sock, msg) {
   // the BRAIN, and must never be sent to the customer (2026-11-21).
   // Human-like: typing indicator + 3–8s wait BEFORE anything is sent.
   await sendHumanLike(sock, fromJid, reply.text, async () => {
-    if (generatedImage && generatedImage.ok) {
-      // The freshly generated preview goes first, with its own short
-      // line — the picked file is skipped so the customer never gets
-      // two pictures for one question.
-      await sock.sendMessage(fromJid, { image: generatedImage.buffer, caption: ai.designCaption(ai.detectLanguage(text)) });
-    } else if (reply.mediaId) {
+    if (reply.mediaId) {
       const media = (business.media || []).find((m) => m.id === reply.mediaId);
       if (media) {
         const filePath = path.join(store.DATA_DIR, 'uploads', businessId, media.filename);
