@@ -27,6 +27,7 @@ const proxyAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
 const store = require('./store');
 const ai = require('./ai');
 const leads = require('./leads');
+const activity = require('./activity');
 
 const sessions = new Map(); // businessId -> { sock, status, pairingCode }
 const histories = new Map(); // businessId:customerJid -> [{role, text}]
@@ -91,6 +92,10 @@ function markSocketDead(businessId) {
   }
   reconnectAttempts.delete(businessId);
   scheduleReconnect(businessId);
+  // The close event may never fire for a silently dead socket (see
+  // checkSocketLiveness) — record the death here so the activity page
+  // shows WHY the number stopped answering.
+  activity.recordActivity(businessId, { type: 'disconnect', detail: 'socket silently dead (ws not open)' });
 }
 
 // Wait until the socket is live again (a reconnect's 'open'), or the
@@ -168,6 +173,7 @@ async function resetBrokenSession(businessId, sock, jid) {
     lastSessionReset.set(user, now);
     await sock.authState.keys.set({ session: { [sessionId]: null } });
     console.log('Reset broken Signal session for', user, '(Bad MAC) — sender will re-key on next retry');
+    activity.recordActivity(businessId, { type: 'session-reset', user });
     return true;
   } catch (e) {
     console.error('Failed to reset broken Signal session for', String(jid || ''), e && e.message);
@@ -186,6 +192,8 @@ function wrapDecryptForSessionReset(businessId, sock) {
       if (err && /bad mac/i.test(err.message || '')) {
         // Fire-and-forget: the decrypt already failed; the reset only
         // unblocks the sender's NEXT retry, so never hold up this throw.
+        const sessionId = sessionIdForJid(opts && opts.jid);
+        activity.recordActivity(businessId, { type: 'badmac', user: sessionId ? sessionId.split('.')[0] : '' });
         resetBrokenSession(businessId, sock, opts && opts.jid);
       }
       throw err;
@@ -592,6 +600,7 @@ function attachHandlers(businessId, sock) {
     const session = getSession(businessId);
     if (connection === 'open') {
       console.log('WhatsApp connected for', businessId);
+      activity.recordActivity(businessId, { type: 'connect' });
       reconnectAttempts.delete(businessId);
       session.status = 'linked';
       session.connected = true;
@@ -605,6 +614,7 @@ function attachHandlers(businessId, sock) {
     } else if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       console.error('WhatsApp connection closed for', businessId, 'code', code);
+      activity.recordActivity(businessId, { type: 'disconnect', code: code === undefined ? null : code });
       // The socket is dead from here on, whatever the stored status was.
       session.connected = false;
       if (code === DisconnectReason.loggedOut) {
@@ -663,6 +673,12 @@ function attachHandlers(businessId, sock) {
       const st = u && u.update && u.update.status;
       if (typeof st === 'undefined') continue;
       console.log('Delivery receipt:', (u.key && u.key.id) || '?', 'to', (u.key && u.key.remoteJid) || '?', '->', receiptStatusName(st));
+      // Advance the matching reply's delivery state and keep the
+      // receipt itself on the activity page.
+      const msgId = u.key && u.key.id;
+      const statusName = receiptStatusName(st);
+      if (msgId) activity.updateReplyDelivery(businessId, msgId, statusName);
+      activity.recordActivity(businessId, { type: 'receipt', msgId: msgId || null, to: (u.key && u.key.remoteJid) || '', status: statusName });
     }
   });
 }
@@ -939,6 +955,20 @@ async function handleIncoming(businessId, sock, msg) {
     if (understood) text = understood;
   }
   if (!text.trim()) { return; } // nothing to answer — typing never started
+  // Record the incoming message for the private activity page: sender
+  // + SHORT preview only, never the full chat text.
+  {
+    const kind = msg.message.imageMessage ? 'photo' : msg.message.videoMessage ? 'video' : msg.message.audioMessage ? 'voice' : 'text';
+    const lidUser = isLid ? fromJid.split('@')[0] : null;
+    activity.recordActivity(businessId, {
+      type: 'incoming',
+      from: fromJid,
+      name: displayName,
+      phone: isLid ? (business.lidToPhone && business.lidToPhone[lidUser]) || null : fromJid.split('@')[0],
+      kind,
+      preview: activity.activityPreview(text),
+    });
+  }
   // Learn the customer's real number when they type it (2026-11-22):
   // from then on, replies to this LID go to the phone-number chat
   // instead (see replyJidFor). The typed number is the customer's own
@@ -1066,6 +1096,18 @@ async function handleIncoming(businessId, sock, msg) {
   }
   if (replySent) console.log('Reply sent to', fromJid, replyJid !== fromJid ? '(via ' + replyJid + ')' : '', sentMsgId ? '(id ' + sentMsgId + ')' : '');
   else console.error('Reply NOT sent to', fromJid, '(send + retry both failed)');
+  // Record the reply for the private activity page: short preview only,
+  // delivery state 'sent' until a receipt advances it (see
+  // messages.update above).
+  activity.recordActivity(businessId, {
+    type: 'reply',
+    from: fromJid,
+    to: replyJid,
+    via: replyJid !== fromJid,
+    msgId: sentMsgId || null,
+    preview: activity.activityPreview(reply.text),
+    delivery: replySent ? 'sent' : 'failed',
+  });
 
   // Confirmation flow: when the customer has fully confirmed their
   // order, the bot says so in the team's words and the conversation
