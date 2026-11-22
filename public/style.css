@@ -1,8 +1,14 @@
 /* ==========================================================================
-   Musa WhatsApp Bot Platform — UI v3.1 (fixed action bars)
+   Musa WhatsApp Bot Platform — UI v4 (total white, 2026-11-22, Zaib)
    --------------------------------------------------------------------------
    One shared stylesheet for all pages. No login — Business ID only,
    everything starts empty, no dummy data, no ads.
+   TOTAL WHITE: every surface is white, depth comes from DARK BLUE 3D
+   shadows only — no green, no teal, no other colors anywhere (the one
+   exception is the green "Online" dot, which is part of the Brain
+   reference design, plus red/amber kept ONLY for danger + warning
+   states). Buttons are white 3D with dark-blue shadows; primary
+   actions are dark blue with white icons, like the Brain composer.
    - Burger drawer replaces the bottom nav (one burger button, top-left).
    - FIXED ACTION BARS (2026-11-20, Zaib: buttons were falling off the
      screen): every page is a 100dvh flex column — top bar (fixed),
@@ -11,23 +17,24 @@
      flex child, so it can NEVER be pushed below the viewport; overflow
      is absorbed by the middle area, never by clipping the buttons.
    - 3D buttons: layered shadows + a ripple (water-type) effect on tap.
-   Palette: ink #10201d · deep teal #0b3b37 · teal #0f766e · WhatsApp
-   green #22c55e · warm paper #f6f5f1 · card #ffffff · muted #5d6f6b.
+   Palette: ink #0b1e3f · navy #0a2a6b · navy-deep #071d4d · navy-soft
+   #123a8f · navy tint #e8eefc · card #ffffff · muted #5a6b8a.
    ========================================================================== */
 :root {
-  --ink: #10201d;
-  --ink-soft: #243632;
-  --muted: #5d6f6b;
-  --muted-2: #85948f;
-  --bg: #f6f5f1;
+  --ink: #0b1e3f;
+  --ink-soft: #22355c;
+  --muted: #5a6b8a;
+  --muted-2: #8b98ad;
+  --bg: #ffffff;
   --card: #ffffff;
-  --border: #e6e4db;
-  --border-soft: #eeece4;
-  --teal: #0f766e;
-  --teal-deep: #0b3b37;
-  --teal-tint: #e3f2ef;
-  --teal-tint-2: #d2ebe6;
-  --green: #22c55e;
+  --border: #dfe6f2;
+  --border-soft: #edf1f7;
+  --navy: #0a2a6b;
+  --navy-deep: #071d4d;
+  --navy-soft: #123a8f;
+  --navy-tint: #e8eefc;
+  --navy-tint-2: #d3ddf7;
+  --green: #22a355; /* Online dot only — part of the Brain reference */
   --green-tint: #e5f7ec;
   --green-dark: #15803d;
   --amber: #b45309;
@@ -35,11 +42,12 @@
   --amber-border: #f3d98b;
   --red: #dc2626;
   --red-tint: #fdecec;
-  --blue-tint: #e8f1fe;
   --radius-card: 20px;
   --radius-input: 14px;
   --radius-btn: 999px; /* bubbly pill buttons (2026-11-21, Zaib — reference design) */
-  --shadow-card: 0 1px 2px rgba(16, 32, 29, .05), 0 8px 24px rgba(16, 32, 29, .06);
+  --shadow-card: 0 1px 2px rgba(10, 42, 107, .05), 0 8px 24px rgba(10, 42, 107, .08);
+  --shadow-3d: 0 3px 0 var(--navy-deep), 0 10px 18px rgba(10, 42, 107, .28);
+  --shadow-3d-white: 0 3px 0 #dbe4f5, 0 8px 16px rgba(10, 42, 107, .16);
   --topbar-h: 56px;
 }
 
@@ -48,7 +56,7 @@ html { -webkit-text-size-adjust: 100%; height: 100%; }
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   margin: 0;
-  background: linear-gradient(180deg, #e7f5ec 0%, #f6f5f1 55%); /* soft green tint, like the reference design */
+  background: #ffffff;
   color: var(--ink);
   font-size: 16px;
   line-height: 1.55;
@@ -61,7 +69,7 @@ body {
   overflow: hidden;
 }
 img, video, audio { max-width: 100%; }
-a { color: var(--teal); }
+a { color: var(--navy); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 /* --- Top bar: ONE burger button + plain brand name ----------------------- */
@@ -71,32 +79,31 @@ header.topbar {
   display: flex;
   align-items: center;
   padding: 6px 12px;
-  background: rgba(255, 255, 255, .94);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  background: #ffffff;
   border-bottom: 1px solid var(--border-soft);
+  box-shadow: 0 2px 12px rgba(10, 42, 107, .07);
   z-index: 40;
 }
 .topbar-inner { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 720px; margin: 0 auto; }
 .burger-btn {
   width: 44px; height: 44px; flex: none;
-  border: 0; background: transparent; color: var(--teal-deep);
+  border: 0; background: #ffffff; color: var(--navy);
   border-radius: 12px; margin: 0; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  cursor: pointer; box-shadow: none;
+  cursor: pointer; box-shadow: var(--shadow-3d-white);
 }
-.burger-btn:hover { background: var(--teal-tint); filter: none; }
+.burger-btn:hover { background: var(--navy-tint); filter: none; }
 .burger-btn:active { transform: none; }
 .burger-btn svg { width: 24px; height: 24px; display: block; }
 .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 9px; }
-.brand-name em { font-style: normal; color: var(--teal); }
-/* Brand mark (2026-11-21, Zaib): the doll logo in the top bar, on every page. */
-.brand-logo { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 2px 6px rgba(15, 118, 110, .3); }
+.brand-name em { font-style: normal; color: var(--navy); }
+/* Brand mark (2026-11-22, Zaib): the Brain character in the top bar, on every page. */
+.brand-logo { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 2px 6px rgba(10, 42, 107, .3); }
 
 /* --- Burger drawer: slides in from the left ------------------------------ */
 .drawer-overlay {
   position: fixed; inset: 0; z-index: 80;
-  background: rgba(16, 32, 29, .45);
+  background: rgba(7, 29, 77, .45);
   opacity: 0; visibility: hidden;
   transition: opacity .25s ease, visibility 0s .25s;
   border: 0; padding: 0; margin: 0;
@@ -106,7 +113,7 @@ header.topbar {
   position: fixed; top: 0; left: 0; bottom: 0; z-index: 90;
   width: min(300px, 84vw);
   background: #fff;
-  box-shadow: 8px 0 32px rgba(16, 32, 29, .22);
+  box-shadow: 8px 0 32px rgba(7, 29, 77, .25);
   transform: translateX(-105%);
   visibility: hidden;
   transition: transform .28s ease, visibility 0s .28s;
@@ -116,15 +123,15 @@ header.topbar {
 .drawer.open { transform: none; visibility: visible; transition: transform .28s ease; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 4px 12px; border-bottom: 1px solid var(--border-soft); flex: none; }
 .drawer-title { font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
-.drawer-title em { font-style: normal; color: var(--teal); }
+.drawer-title em { font-style: normal; color: var(--navy); }
 .drawer-close {
   width: 40px; height: 40px; flex: none;
-  border: 0; background: #eef1ef; color: var(--ink);
+  border: 0; background: var(--navy-tint); color: var(--ink);
   border-radius: 12px; margin: 0; padding: 0;
   font-size: 17px; line-height: 1; cursor: pointer; box-shadow: none;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.drawer-close:hover { background: #e3e8e5; filter: none; }
+.drawer-close:hover { background: var(--navy-tint-2); filter: none; }
 .drawer-nav { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; overflow-y: auto; }
 .drawer-nav a {
   display: flex; align-items: center; gap: 13px;
@@ -133,8 +140,8 @@ header.topbar {
   color: var(--ink); text-decoration: none;
   font-size: 16px; font-weight: 700;
 }
-.drawer-nav a svg { width: 22px; height: 22px; flex: none; color: var(--teal); }
-.drawer-nav a.active { background: var(--teal-tint); color: var(--teal-deep); }
+.drawer-nav a svg { width: 22px; height: 22px; flex: none; color: var(--navy); }
+.drawer-nav a.active { background: var(--navy-tint); color: var(--navy-deep); }
 
 /* --- Fixed action bar: primary actions ALWAYS on screen ------------------ */
 /* The bar is the last flex child of <main> (a 100dvh column) with
@@ -147,11 +154,9 @@ header.topbar {
   display: flex; gap: 10px;
   margin: 12px -16px 0;
   padding: 12px 16px;
-  background: rgba(255, 255, 255, .97);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  background: #ffffff;
   border-top: 1px solid var(--border);
-  box-shadow: 0 -6px 18px rgba(16, 32, 29, .07);
+  box-shadow: 0 -6px 18px rgba(10, 42, 107, .08);
   z-index: 20;
 }
 .action-bar.stack { flex-direction: column; gap: 0; }
@@ -163,17 +168,16 @@ header.topbar {
 
 /* --- Bottom nav (2026-11-21, Zaib): like the reference design, every
    page ends in Home / Connect / Brain / More. "More" opens the drawer
-   with all 7 pages. The burger drawer stays — the reference has both. */
+   with all 7 pages. The burger drawer stays — the reference has both.
+   (The Brain page itself has no bottom nav — it is a chat screen.) */
 .bottom-nav {
   flex: none;
   display: flex; gap: 4px;
   margin: 0 -16px calc(-14px - env(safe-area-inset-bottom));
   padding: 8px 16px calc(10px + env(safe-area-inset-bottom));
-  background: rgba(255, 255, 255, .97);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  background: #ffffff;
   border-top: 1px solid var(--border);
-  box-shadow: 0 -6px 18px rgba(16, 32, 29, .07);
+  box-shadow: 0 -6px 18px rgba(10, 42, 107, .08);
   z-index: 20;
 }
 .bottom-nav a, .bottom-nav button {
@@ -185,38 +189,38 @@ header.topbar {
   text-decoration: none; cursor: pointer;
 }
 .bottom-nav a svg, .bottom-nav button svg { width: 22px; height: 22px; display: block; }
-.bottom-nav a.active, .bottom-nav button.active { color: var(--teal); }
+.bottom-nav a.active, .bottom-nav button.active { color: var(--navy); }
 .bottom-nav a:active, .bottom-nav button:active { transform: none; filter: none; }
 
 /* --- Welcome hero (Home, like the reference) ---------------------------- */
 .welcome-card {
   flex: none;
-  background: linear-gradient(135deg, #12877d, var(--teal-deep));
-  color: #fff; border-radius: var(--radius-card);
+  background: #ffffff; color: var(--ink); border: 1px solid var(--border);
+  border-radius: var(--radius-card);
   padding: 18px; margin-bottom: 12px;
-  box-shadow: 0 3px 0 #0a4a44, 0 10px 18px rgba(15, 118, 110, .28);
+  box-shadow: var(--shadow-3d-white);
 }
-.welcome-card h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: -.01em; }
-.welcome-card p { margin: 0; color: rgba(255, 255, 255, .85); font-size: 14px; }
-.welcome-card .welcome-status { margin-top: 10px; font-weight: 700; font-size: 13px; }
+.welcome-card h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: -.01em; color: var(--navy); }
+.welcome-card p { margin: 0; color: var(--muted); font-size: 14px; }
+.welcome-card .welcome-status { margin-top: 10px; font-weight: 700; font-size: 13px; color: var(--navy); }
 .stat { position: relative; }
-.stat-icon { display: block; width: 26px; height: 26px; margin: 0 auto 4px; color: var(--teal); }
+.stat-icon { display: block; width: 26px; height: 26px; margin: 0 auto 4px; color: var(--navy); }
 .stat-icon svg { width: 26px; height: 26px; display: block; }
 
 /* --- Pairing code boxes (Connect, like the reference) ------------------- */
 .code-boxes {
   display: flex; gap: 8px; justify-content: center; align-items: center;
   margin: 14px 0 4px; min-height: 52px;
-  font-size: 26px; font-weight: 800; letter-spacing: .2em; color: var(--teal-deep);
+  font-size: 26px; font-weight: 800; letter-spacing: .2em; color: var(--navy-deep);
 }
 .code-boxes span {
   display: inline-flex; align-items: center; justify-content: center;
   width: 44px; height: 52px; flex: none;
-  background: #fff; border: 2px solid var(--teal); border-radius: 12px;
-  box-shadow: 0 2px 0 rgba(15, 118, 110, .25);
+  background: #fff; border: 2px solid var(--navy); border-radius: 12px;
+  box-shadow: 0 2px 0 rgba(10, 42, 107, .25);
 }
 .help-details { margin-top: 12px; border-top: 1px solid var(--border-soft); padding-top: 10px; }
-.help-details summary { cursor: pointer; font-weight: 700; color: var(--teal); }
+.help-details summary { cursor: pointer; font-weight: 700; color: var(--navy); }
 .help-details ol { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; line-height: 1.6; }
 
 /* --- Wizard step indicator (Bulk, like the reference) ------------------- */
@@ -232,13 +236,13 @@ header.topbar {
   content: attr(data-n);
   position: absolute; top: 0; left: 50%; transform: translateX(-50%);
   width: 22px; height: 22px; border-radius: 50%;
-  background: #e5e7e5; color: var(--muted-2);
+  background: var(--navy-tint); color: var(--muted-2);
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 800;
 }
-.steps-indicator .step.done::before { background: var(--teal); color: #fff; }
-.steps-indicator .step.current { color: var(--teal-deep); }
-.steps-indicator .step.current::before { background: var(--teal-deep); color: #fff; box-shadow: 0 0 0 3px var(--teal-tint); }
+.steps-indicator .step.done::before { background: var(--navy); color: #fff; }
+.steps-indicator .step.current { color: var(--navy-deep); }
+.steps-indicator .step.current::before { background: var(--navy-deep); color: #fff; box-shadow: 0 0 0 3px var(--navy-tint); }
 
 /* --- Media kind filter (Media, like the reference Photo/Video/Voice) ---- */
 .seg-tabs { flex: none; display: flex; gap: 6px; margin-bottom: 12px; }
@@ -247,19 +251,8 @@ header.topbar {
   background: #fff; color: var(--muted-2); border: 1.5px solid var(--border);
   box-shadow: none; font-size: 13px; padding: 9px 4px;
 }
-.seg-tabs button.active { background: var(--teal); border-color: var(--teal); color: #fff; }
+.seg-tabs button.active { background: var(--navy); border-color: var(--navy); color: #fff; }
 .seg-tabs button:active { transform: none; filter: none; }
-
-/* --- Brain files (Brain, like the reference) ---------------------------- */
-.file-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 2px; border-top: 1px solid var(--border-soft);
-}
-.file-row:first-of-type { border-top: none; }
-.file-row .file-row-icon { width: 34px; height: 34px; flex: none; border-radius: 10px; background: var(--teal-tint); color: var(--teal); display: flex; align-items: center; justify-content: center; }
-.file-row .file-row-icon svg { width: 20px; height: 20px; }
-.file-row b { display: block; font-size: 14px; }
-.file-row span { font-size: 12px; color: var(--muted-2); }
 
 /* --- Leads total + search (Leads, like the reference) -------------------- */
 .leads-total {
@@ -267,7 +260,7 @@ header.topbar {
   background: #fff; border: 1px solid var(--border); border-radius: var(--radius-card);
   padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow-card);
 }
-.leads-total .leads-total-icon { width: 40px; height: 40px; flex: none; border-radius: 50%; background: var(--teal-tint); color: var(--teal); display: flex; align-items: center; justify-content: center; }
+.leads-total .leads-total-icon { width: 40px; height: 40px; flex: none; border-radius: 50%; background: var(--navy-tint); color: var(--navy); display: flex; align-items: center; justify-content: center; }
 .leads-total .leads-total-icon svg { width: 22px; height: 22px; }
 .leads-total b { display: block; font-size: 12px; color: var(--muted-2); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .leads-total .leads-total-num { font-size: 26px; font-weight: 800; line-height: 1.1; }
@@ -281,18 +274,18 @@ main {
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-/* Page title: dark-green pill header, like the reference design's
-   section pills (2026-11-21, Zaib) — same on every page. */
+/* Page title: white pill with dark-blue text + dark-blue 3D shadow. */
 .page-title {
   font-size: 20px; line-height: 1.2; letter-spacing: -.01em; font-weight: 800; flex: none;
-  background: linear-gradient(135deg, #12877d, var(--teal-deep)); color: #fff; text-align: center;
+  background: #ffffff; color: var(--navy); text-align: center;
   padding: 12px 20px; border-radius: 999px; margin: 2px 0 14px;
-  box-shadow: 0 3px 0 #0a4a44, 0 10px 18px rgba(15, 118, 110, .28);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-3d-white);
 }
 /* Content that may grow scrolls inside its own box, never the page. */
 .scroll-area { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .scroll-area::-webkit-scrollbar { width: 4px; }
-.scroll-area::-webkit-scrollbar-thumb { background: #d8d5c9; border-radius: 4px; }
+.scroll-area::-webkit-scrollbar-thumb { background: #d3ddf7; border-radius: 4px; }
 
 /* --- Compact Business ID row (one line, every page) ----------------------- */
 .biz-row { display: flex; gap: 8px; flex: none; margin-bottom: 12px; }
@@ -318,40 +311,42 @@ label:first-child { margin-top: 0; }
 input, textarea, select {
   width: 100%; min-height: 52px;
   padding: 13px 14px;
-  border: 1.5px solid #d8d5c9; border-radius: var(--radius-input);
+  border: 1.5px solid var(--border); border-radius: var(--radius-input);
   font: inherit; font-size: 16px; background: #fff; color: var(--ink);
 }
-input::placeholder, textarea::placeholder { color: #9aa5a0; }
+input::placeholder, textarea::placeholder { color: #9aa5b8; }
 input:focus, textarea:focus, select:focus {
   outline: none;
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, .18);
+  border-color: var(--navy);
+  box-shadow: 0 0 0 3px rgba(10, 42, 107, .15);
 }
 textarea { min-height: 120px; resize: vertical; line-height: 1.5; }
 input[type="file"] { padding: 10px; }
-input[type="checkbox"] { width: 22px; min-height: 22px; flex: none; accent-color: var(--teal); padding: 0; }
+input[type="checkbox"] { width: 22px; min-height: 22px; flex: none; accent-color: var(--navy); padding: 0; }
 .check-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-weight: 400; font-size: 14.5px; line-height: 1.5; }
 .check-row input { margin-top: 2px; }
 
 /* --- 3D buttons + ripple (water-type tap effect) --------------------------- */
+/* Primary: dark blue with white text. Secondary: white 3D with a
+   dark-blue shadow. Danger: red (functional only). */
 button {
   position: relative; overflow: hidden;
-  background: linear-gradient(180deg, #12877d, var(--teal));
+  background: linear-gradient(180deg, var(--navy-soft), var(--navy));
   color: #fff; border: 0; border-radius: var(--radius-btn);
   padding: 14px 20px; min-height: 52px; cursor: pointer;
   font: inherit; font-size: 16px; font-weight: 700;
   margin-top: 14px; width: 100%;
-  box-shadow: 0 3px 0 #0a4a44, 0 10px 18px rgba(15, 118, 110, .28);
+  box-shadow: var(--shadow-3d);
 }
-button:hover { filter: brightness(1.05); }
-button:active { transform: translateY(2px); box-shadow: 0 1px 0 #0a4a44, 0 4px 10px rgba(15, 118, 110, .22); }
-button.secondary { background: #eef1ef; color: var(--ink); box-shadow: 0 3px 0 #cfd6d2, 0 6px 12px rgba(16, 32, 29, .08); }
-button.secondary:hover { background: #e3e8e5; filter: none; }
-button.secondary:active { box-shadow: 0 1px 0 #cfd6d2, 0 2px 6px rgba(16, 32, 29, .08); }
+button:hover { filter: brightness(1.08); }
+button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--navy-deep), 0 4px 10px rgba(10, 42, 107, .22); }
+button.secondary { background: #ffffff; color: var(--navy); box-shadow: var(--shadow-3d-white); }
+button.secondary:hover { background: var(--navy-tint); filter: none; }
+button.secondary:active { box-shadow: 0 1px 0 #dbe4f5, 0 2px 6px rgba(10, 42, 107, .16); }
 button.danger { background: var(--red); box-shadow: 0 3px 0 #7f1d1d, 0 8px 16px rgba(220, 38, 38, .25); }
 button.danger:active { box-shadow: 0 1px 0 #7f1d1d, 0 3px 8px rgba(220, 38, 38, .22); }
-button.small { padding: 10px 16px; min-height: 44px; font-size: 14px; margin-top: 8px; width: auto; box-shadow: 0 2px 0 #cfd6d2, 0 4px 8px rgba(16, 32, 29, .08); }
-button.small:active { box-shadow: 0 1px 0 #cfd6d2, 0 2px 4px rgba(16, 32, 29, .08); }
+button.small { padding: 10px 16px; min-height: 44px; font-size: 14px; margin-top: 8px; width: auto; box-shadow: 0 2px 0 var(--navy-deep), 0 4px 8px rgba(10, 42, 107, .18); }
+button.small:active { box-shadow: 0 1px 0 var(--navy-deep), 0 2px 4px rgba(10, 42, 107, .18); }
 button:disabled { opacity: .55; cursor: wait; }
 .ripple {
   position: absolute; border-radius: 50%;
@@ -359,20 +354,20 @@ button:disabled { opacity: .55; cursor: wait; }
   transform: scale(0); pointer-events: none;
   animation: ripple .55s ease-out forwards;
 }
-button.secondary .ripple, .seg-btn .ripple { background: rgba(15, 118, 110, .18); }
+button.secondary .ripple, .seg-btn .ripple { background: rgba(10, 42, 107, .18); }
 @keyframes ripple { to { transform: scale(1); opacity: 0; } }
 .page-link {
   position: relative; overflow: hidden;
   display: flex; align-items: center; justify-content: center; gap: 6px;
   text-decoration: none;
-  background: linear-gradient(180deg, #12877d, var(--teal));
+  background: linear-gradient(180deg, var(--navy-soft), var(--navy));
   color: #fff; border-radius: var(--radius-btn);
   padding: 14px 18px; min-height: 52px;
   font-weight: 700; font-size: 16px; margin-top: 12px;
-  box-shadow: 0 3px 0 #0a4a44, 0 10px 18px rgba(15, 118, 110, .28);
+  box-shadow: var(--shadow-3d);
 }
-.page-link:active { transform: translateY(2px); box-shadow: 0 1px 0 #0a4a44, 0 4px 10px rgba(15, 118, 110, .22); }
-.page-link.secondary { background: #eef1ef; color: var(--ink); box-shadow: 0 3px 0 #cfd6d2, 0 6px 12px rgba(16, 32, 29, .08); }
+.page-link:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--navy-deep), 0 4px 10px rgba(10, 42, 107, .22); }
+.page-link.secondary { background: #ffffff; color: var(--navy); box-shadow: var(--shadow-3d-white); }
 
 /* --- Badges --------------------------------------------------------------- */
 .badge {
@@ -382,10 +377,10 @@ button.secondary .ripple, .seg-btn .ripple { background: rgba(15, 118, 110, .18)
   white-space: nowrap; vertical-align: middle;
 }
 .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
-.badge.linked, .badge.confirmed { background: var(--green-tint); color: var(--green-dark); }
+.badge.linked, .badge.confirmed { background: var(--navy-tint); color: var(--navy-deep); }
 .badge.not-linked { background: var(--red-tint); color: var(--red); }
 .badge.waiting { background: var(--amber-bg); color: var(--amber); }
-.badge.new { background: var(--blue-tint); color: #1d4ed8; }
+.badge.new { background: var(--navy-tint); color: var(--navy); }
 .badge.new::before { display: none; }
 
 /* --- Per-number pairing limit note (Connect card only) -------------------- */
@@ -404,21 +399,21 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 #pairingCode {
   font-size: 32px; letter-spacing: 5px; font-weight: 800; text-align: center;
   font-variant-numeric: tabular-nums;
-  background: var(--teal-tint);
-  border: 2px dashed var(--teal);
+  background: var(--navy-tint);
+  border: 2px dashed var(--navy);
   border-radius: 16px;
   padding: 18px 10px; margin: 14px 0 6px;
-  word-break: break-all; color: var(--teal-deep);
+  word-break: break-all; color: var(--navy-deep);
 }
-#pairingCountdown { text-align: center; font-weight: 700; color: var(--teal); min-height: 22px; font-size: 14px; margin: 6px 0 0; }
+#pairingCountdown { text-align: center; font-weight: 700; color: var(--navy); min-height: 22px; font-size: 14px; margin: 6px 0 0; }
 
 /* --- Toast (raised clear of the fixed action bar) ------------------------- */
 #toast {
   position: fixed; bottom: calc(100px + env(safe-area-inset-bottom)); left: 16px; right: 16px;
-  background: var(--ink); color: #fff;
+  background: var(--navy-deep); color: #fff;
   padding: 14px 18px; border-radius: 14px; font-size: 15px;
   display: none; z-index: 60;
-  box-shadow: 0 8px 24px rgba(0,0,0,.3); text-align: center;
+  box-shadow: 0 8px 24px rgba(7, 29, 77, .35); text-align: center;
 }
 
 /* --- Home: link status card ----------------------------------------------- */
@@ -428,9 +423,9 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .link-head p { color: var(--muted); margin: 0; font-size: 14.5px; line-height: 1.55; }
 .wa-icon {
   width: 56px; height: 56px; flex: none; border-radius: 18px;
-  background: linear-gradient(135deg, #25d366, #128c7e);
+  background: linear-gradient(135deg, var(--navy-soft), var(--navy-deep));
   color: #fff; display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 12px rgba(37, 211, 102, .35);
+  box-shadow: 0 4px 12px rgba(10, 42, 107, .35);
 }
 .wa-icon svg { width: 30px; height: 30px; }
 
@@ -441,13 +436,13 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
   padding: 14px 10px 12px; box-shadow: var(--shadow-card); text-align: center;
   min-width: 0;
 }
-.stat-num { font-size: 28px; font-weight: 800; line-height: 1.1; color: var(--teal-deep); letter-spacing: -.02em; word-break: break-word; }
+.stat-num { font-size: 28px; font-weight: 800; line-height: 1.1; color: var(--navy-deep); letter-spacing: -.02em; word-break: break-word; }
 .stat-label { color: var(--muted); font-size: 12.5px; font-weight: 600; margin-top: 4px; }
 
 /* --- Media / Leads list items --------------------------------------------- */
 .media-item, .lead {
   border: 1px solid var(--border); border-radius: 16px;
-  padding: 14px; margin: 0 0 10px; background: #fbfaf7;
+  padding: 14px; margin: 0 0 10px; background: #ffffff;
 }
 .media-item > b, .lead > p:first-child { font-size: 15.5px; }
 .media-item img, .media-item video { max-width: 100%; max-height: 220px; border-radius: 12px; display: block; margin: 10px 0; }
@@ -461,66 +456,50 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .file-btn {
   position: relative; overflow: hidden;
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  background: var(--teal); color: #fff; border-radius: var(--radius-btn);
+  background: var(--navy); color: #fff; border-radius: var(--radius-btn);
   padding: 14px 18px; min-height: 52px; cursor: pointer;
   font-size: 16px; font-weight: 700; margin: 14px 0 0; width: 100%; text-align: center;
-  box-shadow: 0 3px 0 #0a4a44, 0 10px 18px rgba(15, 118, 110, .28);
+  box-shadow: var(--shadow-3d);
 }
-.file-btn:hover { filter: brightness(1.05); }
-.file-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #0a4a44, 0 4px 10px rgba(15, 118, 110, .22); }
+.file-btn:hover { filter: brightness(1.08); }
+.file-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--navy-deep), 0 4px 10px rgba(10, 42, 107, .22); }
 .file-input-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
 .char-count { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
 
-/* --- Brain Chat: friendly chat app, not a form ---------------------------- */
-.chat-card { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-bottom: 0; }
-/* Chat header: friendly avatar + name + online status. */
-.chat-header { display: flex; align-items: center; gap: 11px; flex: none; padding-bottom: 12px; border-bottom: 1px solid var(--border-soft); margin-bottom: 12px; }
-.chat-avatar {
-  width: 46px; height: 46px; flex: none; border-radius: 50%;
-  background: linear-gradient(135deg, #14b8a6, var(--teal-deep));
-  color: #fff; display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 3px 10px rgba(15, 118, 110, .35);
-}
-.chat-avatar svg { width: 26px; height: 26px; display: block; }
-.chat-header-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
-.chat-header-text b { font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
-.chat-online { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--green-dark); }
-.chat-online i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; box-shadow: 0 0 0 2px var(--green-tint); }
-.chat-header .badge { flex: none; }
-.summary-card {
-  background: var(--teal-tint); border: 1px solid var(--teal-tint-2);
-  border-radius: 14px; padding: 12px 14px; margin: 0 0 10px; font-size: 14px; flex: none;
-}
-.summary-card b { color: var(--teal-deep); font-size: 14px; }
-.summary-card .muted { white-space: pre-wrap; margin-top: 6px; color: var(--ink-soft); }
+/* --- Chat messages (Brain) ------------------------------------------------- */
 .chat-list {
   flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   border: 1px solid var(--border); border-radius: 16px;
-  padding: 12px; background: #f4f0e6; margin-bottom: 10px;
+  padding: 12px; background: #ffffff; margin-bottom: 10px;
   scroll-behavior: smooth;
 }
-.chat-msg { margin: 10px 0; max-width: 88%; }
+.chat-msg { margin: 10px 0; max-width: 88%; animation: msg-in .28s ease both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .chat-msg b { font-size: 11.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-2); display: block; margin-bottom: 3px; }
 .chat-msg p { margin: 0; white-space: pre-wrap; font-size: 15px; line-height: 1.5; }
 .chat-msg.owner { margin-left: auto; text-align: right; }
 .chat-msg.owner p {
-  background: var(--teal); color: #fff;
+  background: linear-gradient(135deg, var(--navy-soft), var(--navy-deep));
+  color: #fff;
   border-radius: 18px 18px 6px 18px; padding: 11px 14px;
   display: inline-block; text-align: left;
-  box-shadow: 0 2px 6px rgba(15, 118, 110, .28);
+  box-shadow: 0 2px 6px rgba(10, 42, 107, .28);
 }
 .chat-msg.brain p {
   background: #fff; border: 1px solid var(--border);
   border-radius: 18px 18px 18px 6px; padding: 11px 14px;
-  display: inline-block; box-shadow: 0 2px 6px rgba(16, 32, 29, .08);
+  display: inline-block; box-shadow: 0 2px 6px rgba(10, 42, 107, .08);
 }
-/* Typing indicator: three bouncing dots (WhatsApp-style) while the
-   brain is analysing — no plain "Analyzing…" text. */
+.chat-msg.brain img {
+  display: block; max-width: 100%; border-radius: 16px; margin-top: 8px;
+  box-shadow: 0 4px 14px rgba(10, 42, 107, .18);
+}
+/* Typing indicator: three bouncing dots while the brain is thinking. */
 .chat-msg.analyzing .typing-dots {
   display: inline-flex; align-items: center; gap: 5px;
   background: #fff; border: 1px solid var(--border);
   border-radius: 18px 18px 18px 6px; padding: 14px 16px;
-  box-shadow: 0 2px 6px rgba(16, 32, 29, .08);
+  box-shadow: 0 2px 6px rgba(10, 42, 107, .08);
 }
 .typing-dots span {
   width: 8px; height: 8px; border-radius: 50%; background: var(--muted-2);
@@ -529,95 +508,168 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .typing-dots span:nth-child(2) { animation-delay: .18s; }
 .typing-dots span:nth-child(3) { animation-delay: .36s; }
 @keyframes typing-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-5px); opacity: 1; } }
-.chat-input-row { display: flex; gap: 8px; align-items: center; flex: none; }
-.chat-input-row input#brainInput { flex: 1; margin: 0; min-width: 0; }
-.chat-input-row .icon-btn { width: 48px; height: 48px; min-height: 48px; margin: 0; flex: none; }
-.chat-attach { text-decoration: none; font-size: 20px; }
-.chat-mic { font-size: 20px; }
-.chat-attach svg, .chat-mic svg { width: 22px; height: 22px; display: block; }
-.chat-mic.listening { background: var(--red-tint); color: var(--red); border-color: #f5c6c6; }
-.chat-send { width: auto; margin: 0; flex: none; padding: 13px 16px; min-height: 48px; }
 
-/* --- Brain Chat: Muse-friendly (2026-11-21, Zaib) -------------------------
-   The Brain Chat is NOT a WhatsApp clone any more — it feels like
-   Muse's own chat: airy, soft, bubbly and smooth. Big rounded
-   bubbles, a gradient avatar dot on the brain's messages (no stiff
-   "BRAIN" label), a pill composer with round bubbly 3D buttons, and a
-   soft slide-in on every new message. All IDs stay the same — only
-   the look changes, so brain.js needs no change. */
-.muse-chat .chat-header { border-bottom: 1px solid var(--border-soft); padding-bottom: 14px; margin-bottom: 14px; }
-.muse-chat .chat-avatar {
-  width: 52px; height: 52px;
-  background: linear-gradient(135deg, #2dd4bf, #14b8a6 45%, var(--teal-deep));
-  box-shadow: 0 4px 0 #0a4a44, 0 12px 22px rgba(15, 118, 110, .35);
+/* --- Brain page (2026-11-22, Zaib): exactly like the reference image ------
+   Pure white chat screen. Top bar: back button, character avatar, "Brain"
+   + blue verified badge, green dot + "Online", three-dot menu. NO
+   video-call button — cut completely. Center: the big character with a
+   "Hello!" bubble and a "Start a conversation with Brain" pill. As
+   messages arrive the character shrinks and moves up (the .compact
+   class, with a transition); the top bar stays fixed. Bottom: a white
+   pill composer with + / image / video / mic / send. Nothing else on
+   the page — no files card, no summary card, no AI badge, no delete
+   button (those live in the three-dot menu). */
+body.brain-page { background: #ffffff; }
+.brain-topbar {
+  flex: none;
+  display: flex; align-items: center; gap: 12px;
+  padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border-soft);
+  box-shadow: 0 2px 12px rgba(10, 42, 107, .07);
+  z-index: 40;
 }
-.muse-chat .chat-list {
-  background: linear-gradient(180deg, #fdfcf8, #f6f4ec);
-  border: 1px solid var(--border-soft);
-  border-radius: 24px; padding: 16px 14px;
-  box-shadow: inset 0 2px 8px rgba(16, 32, 29, .03);
+.brain-back, .brain-menu-btn {
+  width: 48px; height: 48px; flex: none;
+  border: 0; background: #ffffff; color: var(--navy);
+  border-radius: 50%; margin: 0; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: var(--shadow-3d-white);
 }
-.muse-chat .summary-card {
-  border-radius: 20px; padding: 14px 16px;
-  background: linear-gradient(135deg, #eef8f5, #e3f2ef);
-  box-shadow: 0 2px 8px rgba(15, 118, 110, .08);
+.brain-back:active, .brain-menu-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #dbe4f5, 0 3px 8px rgba(10, 42, 107, .16); }
+.brain-back svg, .brain-menu-btn svg { width: 24px; height: 24px; display: block; }
+.brain-avatar {
+  width: 56px; height: 56px; flex: none; border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid var(--navy);
+  box-shadow: 0 3px 10px rgba(10, 42, 107, .3);
 }
-.muse-chat .chat-msg { max-width: 92%; animation: msg-in .28s ease both; }
-@keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-/* No stiff labels — the avatar dot says who is talking. */
-.muse-chat .chat-msg b { display: none; }
-.muse-chat .chat-msg.brain { position: relative; padding-left: 40px; }
-.muse-chat .chat-msg.brain::before {
-  content: ""; position: absolute; left: 0; top: 2px;
-  width: 30px; height: 30px; border-radius: 50%;
-  background: radial-gradient(circle at 32% 30%, #5eead4, #14b8a6 55%, var(--teal-deep));
-  box-shadow: 0 2px 6px rgba(15, 118, 110, .35);
+.brain-title-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.brain-title { display: flex; align-items: center; gap: 6px; font-size: 21px; font-weight: 800; letter-spacing: -.01em; color: var(--ink); }
+.brain-verified { width: 22px; height: 22px; flex: none; display: inline-flex; }
+.brain-verified svg { width: 22px; height: 22px; display: block; }
+.brain-online { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--green-dark); margin-top: 2px; }
+.brain-online i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); flex: none; box-shadow: 0 0 0 2px var(--green-tint); }
+/* Three-dot menu: Setup from link + Delete all brain data live here. */
+.brain-menu {
+  position: fixed; top: calc(72px + env(safe-area-inset-top)); right: 14px; z-index: 70;
+  background: #ffffff; border: 1px solid var(--border); border-radius: 18px;
+  box-shadow: 0 4px 0 #dbe4f5, 0 16px 32px rgba(10, 42, 107, .25);
+  padding: 6px; min-width: 220px; display: none;
 }
-.muse-chat .chat-msg.brain p {
-  border-radius: 22px 22px 22px 8px; padding: 13px 16px;
-  box-shadow: 0 2px 10px rgba(16, 32, 29, .08);
-  font-size: 15.5px;
+.brain-menu.open { display: block; }
+.brain-menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: none; border: 0; box-shadow: none; border-radius: 12px;
+  color: var(--ink); font-size: 15px; font-weight: 700;
+  padding: 12px 12px; margin: 0; min-height: 48px; text-align: left;
 }
-.muse-chat .chat-msg.owner p {
-  background: linear-gradient(135deg, #12877d, var(--teal-deep));
-  border-radius: 22px 22px 8px 22px; padding: 13px 16px;
-  box-shadow: 0 3px 10px rgba(15, 118, 110, .3);
-  font-size: 15.5px;
+.brain-menu button:hover { background: var(--navy-tint); filter: none; }
+.brain-menu button:active { transform: none; }
+.brain-menu button.danger-item { color: var(--red); }
+.brain-menu button svg { width: 20px; height: 20px; flex: none; }
+.brain-main { padding: 0 0 calc(10px + env(safe-area-inset-bottom)); }
+.brain-chat-list {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 16px 16px 8px; background: #ffffff; scroll-behavior: smooth;
 }
-.muse-chat .chat-msg.analyzing .typing-dots { border-radius: 22px 22px 22px 8px; padding: 16px 18px; }
-/* Pill composer: big rounded input + round bubbly 3D buttons. */
-.muse-chat .chat-input-row { gap: 10px; }
-.muse-chat .chat-input-row input#brainInput {
-  min-height: 54px; border-radius: 999px; padding: 12px 20px;
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 10px rgba(16, 32, 29, .07);
-  font-size: 16px; background: #fff;
+.brain-hero {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 8px 0 4px;
 }
-.muse-chat .chat-input-row input#brainInput:focus { border-color: var(--teal-tint-2); box-shadow: 0 0 0 3px var(--teal-tint), 0 2px 10px rgba(16, 32, 29, .07); outline: none; }
-.muse-chat .chat-input-row .icon-btn {
-  width: 50px; height: 50px; min-height: 50px; border-radius: 50%;
-  background: #fff; color: var(--teal-deep);
-  border: 1px solid var(--border);
-  box-shadow: 0 3px 0 #d8ddd9, 0 8px 16px rgba(16, 32, 29, .1);
-  transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+.brain-hero img {
+  width: 240px; max-width: 62vw; height: auto; border-radius: 28px;
+  transition: width .35s ease, border-radius .35s ease;
 }
-.muse-chat .chat-input-row .icon-btn:active { transform: scale(.92); box-shadow: 0 1px 0 #d8ddd9, 0 3px 8px rgba(16, 32, 29, .1); }
-.muse-chat .chat-input-row .chat-send {
-  width: 54px; height: 54px; min-height: 54px; border-radius: 50%;
-  padding: 0; display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #2dd4bf, var(--teal) 55%, var(--teal-deep));
-  box-shadow: 0 4px 0 #0a4a44, 0 12px 22px rgba(15, 118, 110, .35);
-  transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+.brain-hello {
+  align-self: flex-end; margin: -34px 18px 0 0;
+  background: #ffffff; color: var(--ink);
+  font-size: 28px; font-weight: 800; letter-spacing: -.01em;
+  border: 1px solid var(--border); border-radius: 24px 24px 24px 6px;
+  padding: 10px 22px; box-shadow: var(--shadow-3d-white);
+  transition: opacity .3s ease, max-height .3s ease, margin .3s ease, padding .3s ease;
+  max-height: 80px; overflow: hidden;
 }
-.muse-chat .chat-input-row .chat-send:active { transform: scale(.92); box-shadow: 0 1px 0 #0a4a44, 0 4px 10px rgba(15, 118, 110, .3); }
-.muse-chat .chat-input-row .chat-send svg { width: 24px; height: 24px; display: block; }
-.muse-chat .file-pending { border-radius: 20px; box-shadow: 0 2px 10px rgba(15, 118, 110, .08); }
+.brain-start-pill {
+  background: #ffffff; border: 1px solid var(--border); border-radius: 999px;
+  padding: 14px 20px; margin-top: 20px; max-width: 100%;
+  box-shadow: var(--shadow-3d-white);
+  transition: opacity .3s ease, max-height .3s ease, margin .3s ease, padding .3s ease;
+  max-height: 120px; overflow: hidden;
+}
+.brain-start-pill b { display: block; font-size: 16px; color: var(--navy); }
+.brain-start-pill span { display: block; font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
+/* Messages arrive: the character shrinks and moves up, the greeting
+   pill folds away. The top bar never moves. */
+.brain-hero.compact img { width: 72px; border-radius: 20px; }
+.brain-hero.compact .brain-hello,
+.brain-hero.compact .brain-start-pill {
+  opacity: 0; max-height: 0; margin: 0; padding: 0; border: 0; pointer-events: none;
+}
+/* Composer: white pill with + / image / video / (text) / mic / send. */
+.brain-composer {
+  flex: none;
+  display: flex; align-items: center; gap: 8px;
+  margin: 6px 12px 0; padding: 8px 10px;
+  background: #ffffff; border: 1px solid var(--border); border-radius: 999px;
+  box-shadow: 0 4px 0 #dbe4f5, 0 12px 24px rgba(10, 42, 107, .18);
+}
+.brain-composer input#brainInput {
+  flex: 1; min-width: 0; margin: 0; min-height: 44px;
+  border: 0; border-radius: 999px; padding: 10px 8px;
+  background: transparent; box-shadow: none; font-size: 16px;
+}
+.brain-composer input#brainInput:focus { border: 0; box-shadow: none; outline: none; }
+.brain-composer .icon-btn {
+  width: 46px; height: 46px; min-height: 46px; flex: none;
+  border: 0; border-radius: 50%; margin: 0; padding: 0;
+  background: #ffffff; color: var(--navy);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: var(--shadow-3d-white);
+}
+.brain-composer .icon-btn:active { transform: scale(.92); box-shadow: 0 1px 0 #dbe4f5, 0 3px 8px rgba(10, 42, 107, .16); }
+.brain-composer .icon-btn svg { width: 22px; height: 22px; display: block; }
+.brain-composer .icon-btn.listening { background: var(--red-tint); color: var(--red); }
+.brain-composer .brain-mic {
+  width: 60px; height: 60px; min-height: 60px;
+  background: linear-gradient(180deg, var(--navy-soft), var(--navy-deep));
+  color: #fff;
+  box-shadow: 0 0 0 4px rgba(10, 42, 107, .16), 0 8px 20px rgba(10, 42, 107, .4);
+}
+.brain-composer .brain-mic svg { width: 26px; height: 26px; }
+.brain-composer .brain-send {
+  width: 52px; height: 52px; min-height: 52px;
+  background: linear-gradient(180deg, var(--navy-soft), var(--navy-deep));
+  color: #fff; box-shadow: var(--shadow-3d);
+}
+.brain-composer .brain-send svg { width: 24px; height: 24px; }
+.brain-composer .brain-send:active { transform: scale(.92); box-shadow: 0 1px 0 var(--navy-deep), 0 4px 10px rgba(10, 42, 107, .3); }
+.brain-mic-hint { text-align: center; margin: 6px 0 0; }
+/* Link-setup sheet: slides up from the bottom over the chat. */
+.brain-sheet-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(7, 29, 77, .45);
+  display: none;
+}
+.brain-sheet-overlay.open { display: block; }
+.brain-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+  background: #ffffff; border-radius: 24px 24px 0 0;
+  padding: 18px 18px calc(20px + env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 32px rgba(7, 29, 77, .3);
+  display: none; max-width: 720px; margin: 0 auto;
+}
+.brain-sheet.open { display: block; }
+.brain-sheet h2 { margin: 0 0 4px; font-size: 18px; }
+.brain-sheet p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+.brain-sheet .sheet-actions { display: flex; gap: 10px; }
+.brain-sheet .sheet-actions button { flex: 1; }
 
 /* --- Brain Chat: pending file chip — file is only sent WITH a message ------ */
 .file-pending {
   display: flex; gap: 12px; align-items: flex-start;
-  border: 1.5px solid var(--teal-tint-2); border-radius: 16px;
-  padding: 12px; margin-bottom: 10px; background: #f4faf8; flex: none;
+  border: 1.5px solid var(--navy-tint-2); border-radius: 16px;
+  padding: 12px; margin: 0 16px 10px; background: var(--navy-tint); flex: none;
 }
 .file-pending-preview {
   flex: none; width: 76px; min-height: 44px;
@@ -632,13 +684,14 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .file-pending-actions { display: flex; gap: 8px; }
 .file-pending-actions .chat-send { padding: 11px 14px; min-height: 44px; }
 .file-pending-actions button.secondary { margin-top: 0; }
+.purpose-row label { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; font-size: 14px; margin: 8px 0; }
 
 /* --- Bulk wizard: 4 single-screen steps ------------------------------------ */
 /* Each step scrolls INSIDE itself (overflow-y: auto); the shared action
    bar below the steps is flex: none, so Back / Next / Start Campaign
    can never be pushed off screen, however long the step content is. */
 .wizard { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.wizard-progress { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; font-weight: 800; letter-spacing: .04em; color: var(--teal); margin: 0 0 10px; }
+.wizard-progress { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; font-weight: 800; letter-spacing: .04em; color: var(--navy); margin: 0 0 10px; }
 .wizard-progress button { margin-top: 0; }
 .wizard-step { display: none; flex: 1; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; }
 .wizard-step.active { display: flex; }
@@ -646,12 +699,12 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .wizard-step .preview-box {
   flex: none; max-height: 128px; overflow-y: auto; overscroll-behavior: contain;
   border: 1px solid var(--border); border-radius: 14px;
-  padding: 12px 14px; margin-top: 10px; background: #fbfaf7; font-size: 14px; line-height: 1.55;
+  padding: 12px 14px; margin-top: 10px; background: #ffffff; font-size: 14px; line-height: 1.55;
 }
 .wizard-step .preview-box ul { margin: 8px 0 0; padding-left: 20px; font-size: 14px; }
 .review-box {
   border: 1px solid var(--border); border-radius: 14px;
-  padding: 14px; background: #fbfaf7; font-size: 14.5px; line-height: 1.6;
+  padding: 14px; background: #ffffff; font-size: 14.5px; line-height: 1.6;
 }
 .review-box p { margin: 6px 0; }
 .review-box .msg-preview {
@@ -666,7 +719,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 #campaignsView { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .seg-row {
   display: flex; gap: 4px; flex: none;
-  background: #eceeec;
+  background: var(--navy-tint);
   border-radius: 18px; padding: 4px;
 }
 .seg-btn {
@@ -676,25 +729,25 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 }
 .seg-btn small { display: block; font-size: 12px; font-weight: 400; margin-top: 2px; }
 .seg-btn.is-active {
-  background: #fff; color: var(--teal-deep);
-  box-shadow: 0 2px 8px rgba(16, 32, 29, .14);
+  background: #fff; color: var(--navy-deep);
+  box-shadow: 0 2px 8px rgba(10, 42, 107, .14);
 }
 .seg-btn:hover { filter: none; }
-.seg-btn:active { transform: none; box-shadow: 0 2px 8px rgba(16, 32, 29, .14); }
+.seg-btn:active { transform: none; box-shadow: 0 2px 8px rgba(10, 42, 107, .14); }
 #bulkCampaigns ul { margin: 8px 0 0; padding-left: 20px; font-size: 14px; }
 #bulkCampaigns li { margin: 6px 0; line-height: 1.6; }
 #bulkCampaigns li a { font-weight: 700; }
-#bulkCampaigns .lead { background: #fbfaf7; }
+#bulkCampaigns .lead { background: #ffffff; }
 #bulkCampaigns .lead p:first-child { font-size: 15px; }
 
 /* --- Draft guided runner ---------------------------------------------------- */
 .runner { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .runner-phone {
-  font-size: 26px; font-weight: 800; letter-spacing: -.01em; color: var(--teal-deep);
+  font-size: 26px; font-weight: 800; letter-spacing: -.01em; color: var(--navy-deep);
   text-align: center; margin: 6px 0 2px; word-break: break-all;
 }
 .runner-msg {
-  border: 1px solid var(--border); border-radius: 14px; background: #fbfaf7;
+  border: 1px solid var(--border); border-radius: 14px; background: #ffffff;
   padding: 12px 14px; font-size: 14.5px; line-height: 1.55; white-space: pre-wrap;
   margin: 10px 0 0; max-height: 30vh; overflow-y: auto; overscroll-behavior: contain;
 }
@@ -702,6 +755,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 /* --- Desktop: wider shell, two-column rows ---------------------------------- */
 @media (min-width: 700px) {
   main { padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); }
+  .brain-main { padding: 0 0 calc(10px + env(safe-area-inset-bottom)); }
   .page-title { font-size: 26px; }
   button { width: auto; }
   .wizard-nav button { flex: 1; }
@@ -711,6 +765,8 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
   #toast { left: 50%; right: auto; transform: translateX(-50%); border-radius: 999px; min-width: 320px; max-width: 560px; }
   .stats { gap: 14px; }
   .stat-num { font-size: 34px; }
+  .brain-hero img { width: 280px; }
+  .brain-hero.compact img { width: 80px; }
 }
 @media (min-width: 960px) {
   #pairingCode { font-size: 36px; letter-spacing: 8px; }

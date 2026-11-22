@@ -1,14 +1,12 @@
 // Brain Chat page logic — the owner teaches the bot's brain.
 // Uses the shared helpers from app.js: businessId(), api(), apiJson(),
 // toast(), esc(). No login — Business ID only, like the other pages.
+// The page itself is a chat screen (like the reference): the big
+// character + "Hello!" greeting at the top, the chat below it, and a
+// white pill composer at the bottom. Nothing else lives on this page.
 'use strict';
 
 let brainLoaded = false;
-
-// Warm greeting shown ONLY in the UI when the brain has no messages
-// yet — it is never sent to the server and never stored in the brain's
-// memory. It just makes the chat feel like a friendly conversation.
-const BRAIN_GREETING = 'Salam! Main aapka Brain hoon. Apne business ke baare mein kuch bhi batayein — main samajh kar aapke customers se khud baat kar lunga.';
 
 // Always show the LIVE chat: scroll the list to the newest message.
 function scrollBrainToBottom() {
@@ -24,14 +22,16 @@ function formatBrainText(text) {
 }
 
 function renderBrainMemory(memory) {
-  // Messages render into #brainMessages; the summary card sits above
-  // them inside the same scrollable list, so it scrolls away as the
-  // conversation grows and the live chat stays in front.
+  // The hero (big character + Hello + start pill) shrinks and moves up
+  // as soon as the chat has messages — the .compact class, with a CSS
+  // transition. With no messages yet, the hero is the greeting.
+  const hero = document.getElementById('brainHero');
+  const list = memory || [];
+  if (hero) hero.classList.toggle('compact', list.length > 0);
   const el = document.getElementById('brainMessages') || document.getElementById('brainChat');
   if (!el) return;
-  const list = memory || [];
   if (!list.length) {
-    el.innerHTML = `<div class="chat-msg brain"><b>Brain</b><p>${formatBrainText(BRAIN_GREETING)}</p></div>`;
+    el.innerHTML = '';
     scrollBrainToBottom();
     return;
   }
@@ -43,10 +43,28 @@ function renderBrainMemory(memory) {
   scrollBrainToBottom();
 }
 
+// Show a generated design picture inside the chat, under the brain's
+// reply that announced it. The file itself is saved as customer media
+// on the server, so it stays on the Media page too.
+function renderBrainImage(imageUrl) {
+  if (!imageUrl) return;
+  const el = document.getElementById('brainMessages');
+  if (!el) return;
+  const div = document.createElement('div');
+  div.className = 'chat-msg brain';
+  const img = document.createElement('img');
+  img.src = imageUrl;
+  img.alt = 'Generated design preview';
+  div.appendChild(img);
+  el.appendChild(div);
+  scrollBrainToBottom();
+}
+
 // REAL delete: wipes prompt + memory + summary on the server, then
 // reloads the (now empty) brain. Lead settings, link and campaigns
 // are untouched — only brain knowledge goes.
 async function clearBrainData() {
+  closeBrainMenu();
   if (!confirm('Delete ALL brain data? Your prompt, memory and summary will be wiped. This cannot be undone.')) return;
   try {
     await apiJson(api('/brain/clear'), { method: 'POST' });
@@ -57,62 +75,16 @@ async function clearBrainData() {
   }
 }
 
-function renderBrainSummary(summary) {
-  const box = document.getElementById('brainSummary');
-  const txt = document.getElementById('brainSummaryText');
-  if (!box || !txt) return;
-  if (!summary || (!summary.services.length && !summary.prices.length && !summary.location && !summary.name)) {
-    box.style.display = 'none';
-    return;
-  }
-  const parts = [];
-  if (summary.name) parts.push(`Business: ${summary.name}`);
-  if (summary.category) parts.push(`Category: ${summary.category}`);
-  if (summary.services.length) parts.push(`Services: ${summary.services.slice(0, 4).join(' | ')}`);
-  if (summary.prices.length) parts.push(`Rates: ${summary.prices.slice(0, 4).join(' | ')}`);
-  if (summary.deals.length) parts.push(`Deals: ${summary.deals.slice(0, 3).join(' | ')}`);
-  if (summary.location) parts.push(`Location: ${summary.location}`);
-  txt.textContent = parts.join('\n');
-  box.style.display = '';
-}
-
-function renderBrainAiBadge(aiConnected) {
-  const badge = document.getElementById('brainAiBadge');
-  if (!badge) return;
-  // The badge shows connection status only — when Gemini is not
-  // connected the brain still works locally and confirms in seconds,
-  // so the badge never says "AI not connected".
-  badge.textContent = aiConnected ? '● AI connected' : '● Brain ready';
-  badge.className = 'badge ' + (aiConnected ? 'linked' : 'waiting');
-}
-
 async function loadBrain() {
   try {
     const d = await apiJson(api('/brain'));
     renderBrainMemory(d.brainMemory);
-    renderBrainSummary(d.brainSummary);
-    renderBrainAiBadge(d.aiConnected);
-    scrollBrainToBottom(); // summary showing changes the height — stay on the live chat
+    scrollBrainToBottom();
     brainLoaded = true;
   } catch (e) {
-    toast('Brain could not be loaded: ' + e.message);
+    const msg = String(e.message || '');
+    toast('Brain could not be loaded: ' + (msg.includes('Business ID') ? 'go to Home and enter your Business ID first.' : msg));
   }
-  loadBrainFileCounts();
-}
-
-// Brain Files card (2026-11-21, Zaib — reference design): how many
-// files are brain knowledge vs customer files. Real counts from /media.
-async function loadBrainFileCounts() {
-  try {
-    const d = await apiJson(api('/media'));
-    const list = d.media || [];
-    const knowledge = list.filter((m) => m.purpose !== 'customer').length;
-    const customer = list.filter((m) => m.purpose === 'customer').length;
-    const k = document.getElementById('brainKnowledgeCount');
-    if (k) k.textContent = knowledge + (knowledge === 1 ? ' file' : ' files');
-    const c = document.getElementById('brainCustomerCount');
-    if (c) c.textContent = customer + (customer === 1 ? ' file' : ' files');
-  } catch (e) { /* Business ID not entered yet — counts stay at 0 */ }
 }
 
 function showAnalyzing() {
@@ -145,8 +117,11 @@ async function sendBrainMessage() {
     });
     if (analyzing) analyzing.remove();
     renderBrainMemory(d.brainMemory);
-    renderBrainSummary(d.brainSummary);
-    renderBrainAiBadge(d.aiConnected);
+    // The brain made a design for the owner: show the real picture
+    // right in the chat. If it could not be made, the reply text
+    // itself says so plainly (the team will share the design) — the
+    // brain never says "I can't send a picture".
+    if (d.imageUrl) renderBrainImage(d.imageUrl);
     scrollBrainToBottom(); // newest reply in front, old chat scrolled away
     // No "AI is not connected" toast here: when Gemini is slow or
     // missing, the brain confirms locally in seconds (see ai.js) — the
@@ -157,6 +132,71 @@ async function sendBrainMessage() {
   } finally {
     if (sendBtn) sendBtn.disabled = false;
     input.focus();
+  }
+}
+
+// --- Three-dot menu: Setup from link + Delete all brain data ------------
+function toggleBrainMenu() {
+  const menu = document.getElementById('brainMenu');
+  const btn = document.getElementById('brainMenuBtn');
+  if (!menu) return;
+  const open = !menu.classList.contains('open');
+  menu.classList.toggle('open', open);
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function closeBrainMenu() {
+  const menu = document.getElementById('brainMenu');
+  const btn = document.getElementById('brainMenuBtn');
+  if (menu) menu.classList.remove('open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// --- Setup from link: the board reads a website / Facebook / Instagram
+// link and fills the brain itself. Brain Chat keeps working alongside
+// it — both ways, merge never wipe. The server appends what it learned
+// to the brain's memory, so it shows up as a brain message in the chat.
+function openLinkSheet() {
+  closeBrainMenu();
+  const sheet = document.getElementById('brainLinkSheet');
+  const overlay = document.getElementById('brainSheetOverlay');
+  const status = document.getElementById('brainLinkStatus');
+  if (status) status.textContent = '';
+  if (sheet) sheet.classList.add('open');
+  if (overlay) overlay.classList.add('open');
+  const input = document.getElementById('brainLinkUrl');
+  if (input) input.focus();
+}
+function closeLinkSheet() {
+  const sheet = document.getElementById('brainLinkSheet');
+  const overlay = document.getElementById('brainSheetOverlay');
+  if (sheet) sheet.classList.remove('open');
+  if (overlay) overlay.classList.remove('open');
+}
+async function setupBrainFromLink() {
+  const input = document.getElementById('brainLinkUrl');
+  const status = document.getElementById('brainLinkStatus');
+  const goBtn = document.getElementById('brainLinkGo');
+  const url = input ? input.value.trim() : '';
+  if (!url) { if (status) status.textContent = 'Paste a link first — your website, Facebook page or Instagram.'; return; }
+  if (goBtn) goBtn.disabled = true;
+  if (status) status.textContent = 'Reading the link…';
+  try {
+    const d = await apiJson(api('/brain/setup-from-link'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const f = d.facts || {};
+    const learned = [f.name, f.category].filter(Boolean).join(' — ')
+      || (f.services || []).slice(0, 2).join(', ')
+      || 'your business';
+    if (status) status.textContent = 'Brain learned: ' + learned;
+    toast('Brain learned from the link.');
+    setTimeout(() => { closeLinkSheet(); loadBrain(); }, 900);
+  } catch (e) {
+    if (status) status.textContent = 'Could not read that link: ' + e.message;
+  } finally {
+    if (goBtn) goBtn.disabled = false;
   }
 }
 
@@ -331,15 +371,36 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   const micBtn = document.getElementById('brainMic');
   if (micBtn) micBtn.addEventListener('click', toggleMic);
-  const fileInput = document.getElementById('brainFile');
-  if (fileInput) {
-    fileInput.addEventListener('change', () => {
-      const f = fileInput.files[0];
-      fileInput.value = '';
-      // Only shows the preview + caption box — nothing uploads yet.
-      if (f) showBrainFilePending(f);
+  // Composer attach buttons: + takes any file, the image button takes
+  // photos, the video button takes videos. All three only show the
+  // preview chip — nothing uploads until the owner writes the message.
+  const wireFileButton = (btnId, inputId) => {
+    const btn = document.getElementById(btnId);
+    const fileInput = document.getElementById(inputId);
+    if (btn && fileInput) btn.addEventListener('click', () => fileInput.click());
+    if (fileInput) {
+      fileInput.addEventListener('change', () => {
+        const f = fileInput.files[0];
+        fileInput.value = '';
+        if (f) showBrainFilePending(f);
+      });
+    }
+  };
+  wireFileButton('brainPlus', 'brainFile');
+  wireFileButton('brainImageBtn', 'brainImageFile');
+  wireFileButton('brainVideoBtn', 'brainVideoFile');
+  const linkInput = document.getElementById('brainLinkUrl');
+  if (linkInput) {
+    linkInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); setupBrainFromLink(); }
     });
   }
+  // Tapping anywhere outside the three-dot menu closes it.
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('brainMenu');
+    const btn = document.getElementById('brainMenuBtn');
+    if (menu && menu.classList.contains('open') && btn && !btn.contains(e.target) && !menu.contains(e.target)) closeBrainMenu();
+  });
   const capInput = document.getElementById('brainFileCaption');
   if (capInput) {
     capInput.addEventListener('keydown', (e) => {
