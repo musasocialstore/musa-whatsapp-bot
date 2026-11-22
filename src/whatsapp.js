@@ -582,6 +582,32 @@ function attachHandlers(businessId, sock) {
       try { await handleIncoming(businessId, sock, msg); } catch (e) { console.error('handleIncoming failed', e); }
     }
   });
+
+  // Delivery receipts (2026-11-22, Zaib: the bot logs "Reply sent"
+  // but the customer's phone shows nothing — a resolved send only
+  // proves the SERVER accepted the stanza. These receipts prove how
+  // far it actually got: SERVER_ACK = the server has it, DELIVERY_ACK
+  // = it reached one of the customer's devices, READ = they opened
+  // it, ERROR = the server says a device could not display it. Both
+  // the name and the number are logged so the mapping can never
+  // mislead, and the message id matches the "(id ...)" on the
+  // "Reply sent to" line for the same message.
+  sock.ev.on('messages.update', (updates) => {
+    for (const u of updates || []) {
+      const st = u && u.update && u.update.status;
+      if (typeof st === 'undefined') continue;
+      console.log('Delivery receipt:', (u.key && u.key.id) || '?', 'to', (u.key && u.key.remoteJid) || '?', '->', receiptStatusName(st));
+    }
+  });
+}
+
+// WhatsApp message status names (proto.WebMessageInfo.Status:
+// ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, READ=4,
+// PLAYED=5). The raw number rides along so a wrong name can never
+// mislead the log reader.
+function receiptStatusName(status) {
+  const names = { 0: 'ERROR', 1: 'PENDING', 2: 'SERVER_ACK', 3: 'DELIVERY_ACK', 4: 'READ', 5: 'PLAYED' };
+  return (names[status] || 'UNKNOWN') + '(' + status + ')';
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -843,7 +869,10 @@ async function handleIncoming(businessId, sock, msg) {
   // human line for that file — the owner's caption is written to teach
   // the BRAIN, and must never be sent to the customer (2026-11-21).
   // Human-like: typing indicator + 3–8s wait BEFORE anything is sent.
+  // The sent message id is captured so the "Delivery receipt" lines
+  // (messages.update) can be matched to this exact reply.
   let replySent = false;
+  let sentMsgId = null;
   try {
     await sendHumanLike(sock, fromJid, reply.text, async () => {
       if (reply.mediaId) {
@@ -859,7 +888,8 @@ async function handleIncoming(businessId, sock, msg) {
           }
         }
       }
-      await sock.sendMessage(fromJid, { text: reply.text });
+      const sent = await sock.sendMessage(fromJid, { text: reply.text });
+      sentMsgId = sent && sent.key && sent.key.id;
     });
     replySent = true;
   } catch (e) {
@@ -877,7 +907,8 @@ async function handleIncoming(businessId, sock, msg) {
       const liveSession = sessions.get(businessId);
       if (live && liveSession && liveSession.sock) {
         await sendHumanLike(liveSession.sock, fromJid, reply.text, async () => {
-          await liveSession.sock.sendMessage(fromJid, { text: reply.text });
+          const sent = await liveSession.sock.sendMessage(fromJid, { text: reply.text });
+          sentMsgId = sent && sent.key && sent.key.id;
         });
         replySent = true;
       } else {
@@ -887,7 +918,7 @@ async function handleIncoming(businessId, sock, msg) {
       console.error('Customer reply retry failed:', (e2 && e2.message) || e2);
     }
   }
-  if (replySent) console.log('Reply sent to', fromJid);
+  if (replySent) console.log('Reply sent to', fromJid, sentMsgId ? '(id ' + sentMsgId + ')' : '');
   else console.error('Reply NOT sent to', fromJid, '(send + retry both failed)');
 
   // Confirmation flow: when the customer has fully confirmed their
@@ -979,4 +1010,4 @@ async function disconnect(businessId) {
   try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
 }
 
-module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
+module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, receiptStatusName, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
