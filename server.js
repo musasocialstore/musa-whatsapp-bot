@@ -337,9 +337,24 @@ app.post('/api/business/:id/brain/chat', async (req, res) => {
   }
   business.brainMemory = business.brainMemory || [];
   business.brainMemory.push({ role: 'owner', text: message, at: new Date().toISOString() });
+  // Link in the chat (2026-11-22, Zaib: the brain told him it cannot
+  // open links — it CAN: the system fetches the link and teaches the
+  // brain FIRST, so the reply is what the link taught, never a refusal
+  // to open it). setupFromLink merges the facts into the brain (memory
+  // + prompt + summary); the reply below carries them too.
+  const linkMatch = String(message).match(/https?:\/\/[^\s'")\]]+/i);
+  let linkLearned = null;
+  if (linkMatch) {
+    try {
+      const r = await linkSetup.setupFromLink(business, linkMatch[0]);
+      linkLearned = { ok: true, facts: r.facts, url: r.url };
+    } catch (e) {
+      linkLearned = { ok: false, error: String((e && e.message) || e).slice(0, 120) };
+    }
+  }
   // No picture is ever created (2026-11-22, Zaib: the picture section
   // was deleted from the update). The brain answers in words only.
-  const out = await ai.brainChat(business, message);
+  const out = await ai.brainChat(business, message, linkLearned);
   let replyText = out.text;
   // If the owner asked for a design and the reply doesn't already
   // promise the team will share it, say so plainly — the word
