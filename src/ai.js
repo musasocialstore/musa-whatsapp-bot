@@ -1050,11 +1050,13 @@ function buildImagePrompt(business, customerText, history) {
   const want = String(customerText || '').slice(0, 300);
   const isWebsite = /website|web|site|e-?commerce|restaurant|store|shop/i.test((s.category || '') + ' ' + (s.services || []).join(' ') + ' ' + want);
   // (2026-11-22, Zaib: the first preview came back as a car photo
-  // with a photo section, not a website UI.) A website preview must
-  // be a real UI mockup — header, nav, product grid with prices — and
-  // must NOT have a large photo hero or any car/vehicle photo.
+  // with a photo section, not a website UI; the second came back as
+  // a PHOTO of a monitor on a desk, not a flat UI.) A website preview
+  // must be a flat full-screen UI screenshot — the whole image IS the
+  // website — with header, nav, product grid with prices, and must NOT
+  // show a monitor, desk, photo hero or any car/vehicle photo.
   const subject = isWebsite
-    ? 'a modern, clean, professional e-commerce website homepage UI design mockup: header with logo and navigation menu, hero banner with headline text, product grid with product cards showing name and price, footer, flat UI design, no large photo hero section, no photographs, no cars, no vehicles'
+    ? 'a modern, clean, professional e-commerce website homepage UI design mockup: the whole image IS the website interface, full-screen website screenshot, header with logo and navigation menu, hero banner with headline text, product grid with product cards showing name and price, footer, flat 2D UI design, no computer monitor, no device, no desk, no background objects, no large photo hero section, no photographs, no cars, no vehicles'
     : 'a clean, professional product / service image for this business';
   return `Create ${subject} for ${bits.join(' ') || 'this business'}. Customer asked: "${want}". ${convo ? `Conversation so far: ${convo}. ` : ''}High quality, professional, mobile-friendly layout, soft pleasant colors, no spelling mistakes in any text on the image.`;
 }
