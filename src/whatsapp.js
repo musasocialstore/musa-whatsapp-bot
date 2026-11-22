@@ -626,15 +626,54 @@ function humanDelayMs(replyText) {
   return Math.min(10000, Math.round(base + extra));
 }
 
-// Typing WHILE the reply is being written (2026-11-22, Zaib: the
-// customer saw nothing for up to a minute, then "typing…" briefly,
-// then — in their eyes — nothing. The reply was generated FIRST and
-// the typing indicator only went out with the send, so a slow Gemini
-// call looked exactly like a broken bot. Now the customer sees typing
-// from the first second, refreshed every few seconds while the brain
-// thinks. Returns a stop function; self-stops after 75s so a leaked
-// timer can never run forever. Presence failures are swallowed — a
-// dead socket must never break the reply path.
+// --- Human typing timing (2026-11-22, Zaib, 21:54 PKT) ---
+// Typing must NOT start the instant a message arrives, and it must
+// show for at least 15 seconds before the reply goes out. The reply
+// may take up to a minute in total — that is fine, it looks human.
+// So: the bot "reads" first (READ_PAUSE_MS of silence, no typing),
+// then types, and the reply is only sent once typing has shown for
+// MIN_TYPING_MS — unless generation itself was slow, in which case
+// the typing time is already filled and the reply goes at once
+// (never held past MAX_REPLY_WAIT_MS total). This REPLACES the 18:05
+// PKT fast-reply behaviour (typing from the first second) — Zaib
+// corrected it: instant typing looks like a machine, not a human.
+const READ_PAUSE_MS = 5000;
+const MIN_TYPING_MS = 15000;
+const MAX_REPLY_WAIT_MS = 55000;
+
+// Start typing only after the read pause: the bot reads the message
+// first, then types. Returns { stop, startedAt }.
+async function beginTypingAfterReadPause(sock, jid, arrivedAt, readPauseMs) {
+  const pause = (readPauseMs === undefined ? READ_PAUSE_MS : readPauseMs);
+  const elapsed = Date.now() - arrivedAt;
+  if (elapsed < pause) await sleep(pause - elapsed);
+  return { stop: startTyping(sock, jid), startedAt: Date.now() };
+}
+
+// Wait until typing has shown for at least minTypingMs — but never
+// past maxWaitMs total since the message arrived (a slow reply
+// already filled the typing time by then). Returns ms waited.
+async function waitForMinTyping(typingStartedAt, arrivedAt, minTypingMs, maxWaitMs) {
+  const min = (minTypingMs === undefined ? MIN_TYPING_MS : minTypingMs);
+  const max = (maxWaitMs === undefined ? MAX_REPLY_WAIT_MS : maxWaitMs);
+  const typingMs = Date.now() - typingStartedAt;
+  const totalMs = Date.now() - arrivedAt;
+  const wait = Math.min(Math.max(0, min - typingMs), Math.max(0, max - totalMs));
+  if (wait > 0) await sleep(wait);
+  return wait;
+}
+
+// Typing WHILE the reply is being written (2026-11-22): the customer
+// used to see nothing for up to a minute, then "typing…" briefly,
+// then — in their eyes — nothing, because the reply was generated
+// FIRST and the typing indicator only went out with the send. The
+// 18:05 PKT fix swung too far the other way (typing from the first
+// second — Zaib: that looks like a machine). The caller now decides
+// when to start it — see beginTypingAfterReadPause: the bot reads
+// first, then types for at least 15 seconds. Returns a stop
+// function; self-stops after 75s so a leaked timer can never run
+// forever. Presence failures are swallowed — a dead socket must never
+// break the reply path.
 function startTyping(sock, jid, intervalMs) {
   let stopped = false;
   const tick = () => {
@@ -783,6 +822,24 @@ async function extractVideoFrameFromMessage(msg) {
   }
 }
 
+// Reply routing (2026-11-22, Zaib): a LID is not a phone number.
+// The receipts proved it — 14 old replies to 21797730836562@lid sit
+// READ on the customer's phone (all marked read at 21:57:04 when he
+// opened that chat), yet the chat he watches and sends from shows
+// NONE of them. WhatsApp splits the LID chat from the phone-number
+// chat, so a reply to the LID lands in a thread the customer never
+// looks at. When the real phone number is known for a LID (set by
+// the owner, or learned when the customer types their number), the
+// reply goes to the phone-number chat instead — the one the customer
+// actually watches. The LID itself stays the record of WHO the
+// customer is (history, leads, learnedQA all keep it); only the
+// destination of the sent message changes.
+function replyJidFor(business, fromJid) {
+  if (!fromJid || !fromJid.endsWith('@lid')) return fromJid;
+  const phone = business && business.lidToPhone && business.lidToPhone[fromJid.split('@')[0]];
+  return phone ? phone + '@s.whatsapp.net' : fromJid;
+}
+
 async function handleIncoming(businessId, sock, msg) {
   if (!msg.message || msg.key.fromMe) return;
   const business = store.getBusiness(businessId);
@@ -801,11 +858,10 @@ async function handleIncoming(businessId, sock, msg) {
   // — the lead must show the real name and never a fake number.
   const displayName = msg.pushName || '';
   const isLid = !!(fromJid && fromJid.endsWith('@lid'));
-  // Typing from the FIRST second (see startTyping): the customer must
-  // never stare at a dead chat while the reply is being written.
-  const stopTyping = startTyping(sock, fromJid);
   // Text first; a picture / video / voice note is understood with
   // Gemini and becomes text the bot can answer to (2026-11-21, Zaib).
+  // No typing yet — the bot reads first (see beginTypingAfterReadPause).
+  const arrivedAt = Date.now();
   let text = msg.message.conversation
     || msg.message.extendedTextMessage?.text
     || msg.message.imageMessage?.caption
@@ -816,7 +872,27 @@ async function handleIncoming(businessId, sock, msg) {
     const understood = await understandCustomerMedia(msg);
     if (understood) text = understood;
   }
-  if (!text.trim()) { stopTyping(); return; }
+  if (!text.trim()) { return; } // nothing to answer — typing never started
+  // Learn the customer's real number when they type it (2026-11-22):
+  // from then on, replies to this LID go to the phone-number chat
+  // instead (see replyJidFor). The typed number is the customer's own
+  // — the lead flow already treats it that way.
+  if (isLid && !(business.lidToPhone && business.lidToPhone[fromJid.split('@')[0]])) {
+    const typed = leads.extractPhoneNumber(text);
+    if (typed) {
+      business.lidToPhone = business.lidToPhone || {};
+      business.lidToPhone[fromJid.split('@')[0]] = typed;
+      try { store.saveBusiness(business); } catch (e) {}
+      console.log('Learned phone number for LID', fromJid.split('@')[0], '-> replies will go to the phone-number chat from now on');
+    }
+  }
+  // Where the reply goes: the phone-number chat when the number is
+  // known, otherwise the LID as before.
+  const replyJid = replyJidFor(business, fromJid);
+  // The bot has read the message; now it types — for at least 15
+  // seconds before the reply goes out (Zaib, 2026-11-22 21:54 PKT).
+  const typing = await beginTypingAfterReadPause(sock, replyJid, arrivedAt);
+  const stopTyping = typing.stop;
 
   const key = `${businessId}:${fromJid}`;
   const history = histories.get(key) || [];
@@ -860,8 +936,12 @@ async function handleIncoming(businessId, sock, msg) {
   try { ai.learnFromCustomer(business, text, reply.text); } catch (e) {}
   try { store.saveBusiness(business); } catch (e) { console.error('Could not save business after customer chat:', e && e.message); }
 
-  // Stop the "thinking" typing here — sendHumanLike sends its own
-  // composing presence with the real send.
+  // Typing must have shown for at least 15 seconds before the reply
+  // goes out (Zaib, 2026-11-22 21:54 PKT) — unless generation was
+  // slow, in which case it already has. Then stop the "thinking"
+  // typing — sendHumanLike sends its own composing presence with the
+  // real send.
+  await waitForMinTyping(typing.startedAt, arrivedAt);
   stopTyping();
   // Send media first if the AI picked one, then the short text reply.
   // The media always goes WITH a written line about what it is —
@@ -874,7 +954,7 @@ async function handleIncoming(businessId, sock, msg) {
   let replySent = false;
   let sentMsgId = null;
   try {
-    await sendHumanLike(sock, fromJid, reply.text, async () => {
+    await sendHumanLike(sock, replyJid, reply.text, async () => {
       if (reply.mediaId) {
         const media = (business.media || []).find((m) => m.id === reply.mediaId);
         if (media) {
@@ -882,13 +962,13 @@ async function handleIncoming(businessId, sock, msg) {
           if (fs.existsSync(filePath)) {
             const buffer = fs.readFileSync(filePath);
             const mediaCaption = ai.mediaIntroText(media, ai.detectLanguage(text));
-            if (media.kind === 'image') await sock.sendMessage(fromJid, { image: buffer, caption: mediaCaption });
-            else if (media.kind === 'video') await sock.sendMessage(fromJid, { video: buffer, caption: mediaCaption });
-            else if (media.kind === 'audio') await sock.sendMessage(fromJid, { audio: buffer, ptt: true });
+            if (media.kind === 'image') await sock.sendMessage(replyJid, { image: buffer, caption: mediaCaption });
+            else if (media.kind === 'video') await sock.sendMessage(replyJid, { video: buffer, caption: mediaCaption });
+            else if (media.kind === 'audio') await sock.sendMessage(replyJid, { audio: buffer, ptt: true });
           }
         }
       }
-      const sent = await sock.sendMessage(fromJid, { text: reply.text });
+      const sent = await sock.sendMessage(replyJid, { text: reply.text });
       sentMsgId = sent && sent.key && sent.key.id;
     });
     replySent = true;
@@ -906,8 +986,8 @@ async function handleIncoming(businessId, sock, msg) {
       const live = await waitForLiveSocket(businessId, 25000);
       const liveSession = sessions.get(businessId);
       if (live && liveSession && liveSession.sock) {
-        await sendHumanLike(liveSession.sock, fromJid, reply.text, async () => {
-          const sent = await liveSession.sock.sendMessage(fromJid, { text: reply.text });
+        await sendHumanLike(liveSession.sock, replyJid, reply.text, async () => {
+          const sent = await liveSession.sock.sendMessage(replyJid, { text: reply.text });
           sentMsgId = sent && sent.key && sent.key.id;
         });
         replySent = true;
@@ -918,7 +998,7 @@ async function handleIncoming(businessId, sock, msg) {
       console.error('Customer reply retry failed:', (e2 && e2.message) || e2);
     }
   }
-  if (replySent) console.log('Reply sent to', fromJid, sentMsgId ? '(id ' + sentMsgId + ')' : '');
+  if (replySent) console.log('Reply sent to', fromJid, replyJid !== fromJid ? '(via ' + replyJid + ')' : '', sentMsgId ? '(id ' + sentMsgId + ')' : '');
   else console.error('Reply NOT sent to', fromJid, '(send + retry both failed)');
 
   // Confirmation flow: when the customer has fully confirmed their
@@ -928,7 +1008,7 @@ async function handleIncoming(businessId, sock, msg) {
   // full chat. Anything else still uses the normal lead capture below.
   if (isConfirmedOrder(text, reply.text, history)) {
     if (!TEAM_LINE_RE.test(reply.text)) {
-      try { await sendText(businessId, fromJid, teamLineFor(ai.detectLanguage(text))); } catch (e) { console.error('team line send failed:', e && e.message); }
+      try { await sendText(businessId, replyJid, teamLineFor(ai.detectLanguage(text))); } catch (e) { console.error('team line send failed:', e && e.message); }
     }
     const historyText = history.map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${h.text}`).join('\n');
     await leads.captureAndForward(business, fromJid, historyText, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid });
@@ -1010,4 +1090,4 @@ async function disconnect(businessId) {
   try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
 }
 
-module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, receiptStatusName, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
+module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, beginTypingAfterReadPause, waitForMinTyping, READ_PAUSE_MS, MIN_TYPING_MS, MAX_REPLY_WAIT_MS, receiptStatusName, replyJidFor, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
