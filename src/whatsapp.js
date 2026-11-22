@@ -731,6 +731,13 @@ async function handleIncoming(businessId, sock, msg) {
   if (!business.linked) return;
   const fromJid = msg.key.remoteJid;
   if (!fromJid || fromJid.endsWith('@g.us')) return; // DMs only, never group messages
+  // Inbound visibility (2026-11-22, Zaib: customers message but no
+  // reply, and nothing at all appears in the logs — a silent early
+  // return and a successful reply were indistinguishable). Log every
+  // incoming DM once (sender + text preview, never the full chat) and
+  // log again when the reply actually leaves, so the next customer
+  // message leaves a complete trail in the Railway logs.
+  console.log('Incoming customer message from', fromJid, 'type', Object.keys(msg.message || {}).join(','));
   // The customer's WhatsApp name + whether the chat is LID-addressed
   // (2026-11-21, Zaib): a LID is a long numeric ID, not a phone number
   // — the lead must show the real name and never a fake number.
@@ -798,6 +805,7 @@ async function handleIncoming(businessId, sock, msg) {
   // human line for that file — the owner's caption is written to teach
   // the BRAIN, and must never be sent to the customer (2026-11-21).
   // Human-like: typing indicator + 3–8s wait BEFORE anything is sent.
+  let replySent = false;
   try {
     await sendHumanLike(sock, fromJid, reply.text, async () => {
       if (reply.mediaId) {
@@ -815,6 +823,7 @@ async function handleIncoming(businessId, sock, msg) {
       }
       await sock.sendMessage(fromJid, { text: reply.text });
     });
+    replySent = true;
   } catch (e) {
     // The socket died while sending (2026-11-22, Zaib: the customer
     // saw "typing…" and then nothing — sendMessage threw Boom 428
@@ -832,6 +841,7 @@ async function handleIncoming(businessId, sock, msg) {
         await sendHumanLike(liveSession.sock, fromJid, reply.text, async () => {
           await liveSession.sock.sendMessage(fromJid, { text: reply.text });
         });
+        replySent = true;
       } else {
         console.error('Customer reply retry skipped: socket did not come back live in time');
       }
@@ -839,6 +849,8 @@ async function handleIncoming(businessId, sock, msg) {
       console.error('Customer reply retry failed:', (e2 && e2.message) || e2);
     }
   }
+  if (replySent) console.log('Reply sent to', fromJid);
+  else console.error('Reply NOT sent to', fromJid, '(send + retry both failed)');
 
   // Confirmation flow: when the customer has fully confirmed their
   // order, the bot says so in the team's words and the conversation
