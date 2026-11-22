@@ -337,38 +337,20 @@ app.post('/api/business/:id/brain/chat', async (req, res) => {
   }
   business.brainMemory = business.brainMemory || [];
   business.brainMemory.push({ role: 'owner', text: message, at: new Date().toISOString() });
-  // The owner asked for a design / picture (2026-11-22, Zaib): the
-  // brain makes it with the same generator the customer bot uses, in
-  // parallel with the text reply so the owner never waits twice. The
-  // picture is saved as customer media and shown in the chat.
-  const imageRequest = ai.detectImageRequest(message);
-  const historyForImage = business.brainMemory.slice(-6).map((m) => ({ role: m.role === 'owner' ? 'customer' : 'bot', text: m.text }));
-  const imagePromise = imageRequest
-    ? ai.generateCustomerImage(business, message, historyForImage).catch(() => ({ ok: false, reason: 'error' }))
-    : Promise.resolve(null);
-  const [out, generated] = await Promise.all([ai.brainChat(business, message), imagePromise]);
+  // No picture is ever created (2026-11-22, Zaib: the picture section
+  // was deleted from the update). The brain answers in words only.
+  const out = await ai.brainChat(business, message);
   let replyText = out.text;
-  let imageUrl = null;
-  if (imageRequest) {
-    if (generated && generated.ok) {
-      const saved = ai.saveGeneratedImage(business, businessId(req), generated);
-      if (saved.ok) imageUrl = saved.url;
-    } else {
-      // No picture could be made (e.g. image quota finished): say so
-      // plainly and promise the team will share it — never the rude
-      // "I can't send a picture" wording, never a fake promise. The
-      // check looks for the team-share promise itself: the word
-      // "design" alone is not enough, the owner's own message often
-      // contains it ("mujhe design dikhao").
-      replyText = ai.stripPictureRefusal(replyText);
-      const note = ai.imageFailedNote(ai.detectLanguage(message));
-      if (!/team will share|team.*share/i.test(replyText)) replyText += ' ' + note;
-    }
+  // If the owner asked for a design and the reply doesn't already
+  // promise the team will share it, say so plainly — the word
+  // "design" alone is not enough, the owner's own message often
+  // contains it ("mujhe design dikhao").
+  if (ai.detectImageRequest(message) && !/team will share|team.*share/i.test(replyText)) {
+    replyText += ' ' + (ai.detectLanguage(message) === 'en'
+      ? 'The team will share the design with you soon and confirm the final one.'
+      : 'Team jald aap ko design share karegi aur final confirm karegi.');
   }
   business.brainMemory.push({ role: 'brain', text: replyText, at: new Date().toISOString() });
-  if (imageUrl) {
-    business.brainMemory.push({ role: 'brain', text: 'Maine aap ke liye ye design banaya hai:', at: new Date().toISOString() });
-  }
   business.brainMemory = business.brainMemory.slice(-100);
   // The distilled summary is a fast LOCAL parse (no AI call), so it is
   // refreshed after every chat message — AI reply or local confirmation.
@@ -376,7 +358,6 @@ app.post('/api/business/:id/brain/chat', async (req, res) => {
   store.saveBusiness(business);
   res.json({
     reply: replyText,
-    imageUrl,
     aiConnected: out.aiConnected,
     local: !!out.local,
     brainMemory: business.brainMemory,
