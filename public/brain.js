@@ -43,23 +43,6 @@ function renderBrainMemory(memory) {
   scrollBrainToBottom();
 }
 
-// Show a generated design picture inside the chat, under the brain's
-// reply that announced it. The file itself is saved as customer media
-// on the server, so it stays on the Media page too.
-function renderBrainImage(imageUrl) {
-  if (!imageUrl) return;
-  const el = document.getElementById('brainMessages');
-  if (!el) return;
-  const div = document.createElement('div');
-  div.className = 'chat-msg brain';
-  const img = document.createElement('img');
-  img.src = imageUrl;
-  img.alt = 'Generated design preview';
-  div.appendChild(img);
-  el.appendChild(div);
-  scrollBrainToBottom();
-}
-
 // REAL delete: wipes prompt + memory + summary on the server, then
 // reloads the (now empty) brain. Lead settings, link and campaigns
 // are untouched — only brain knowledge goes.
@@ -117,11 +100,6 @@ async function sendBrainMessage() {
     });
     if (analyzing) analyzing.remove();
     renderBrainMemory(d.brainMemory);
-    // The brain made a design for the owner: show the real picture
-    // right in the chat. If it could not be made, the reply text
-    // itself says so plainly (the team will share the design) — the
-    // brain never says "I can't send a picture".
-    if (d.imageUrl) renderBrainImage(d.imageUrl);
     scrollBrainToBottom(); // newest reply in front, old chat scrolled away
     // No "AI is not connected" toast here: when Gemini is slow or
     // missing, the brain confirms locally in seconds (see ai.js) — the
