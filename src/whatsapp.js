@@ -129,6 +129,71 @@ function startSocketWatchdog() {
   if (socketWatchdog.unref) socketWatchdog.unref();
 }
 
+// --- Bad MAC session reset (2026-11-22) ---
+// A customer's Signal session can wedge — every message from them then
+// fails with "Bad MAC" and Baileys retries forever (47 failures every
+// ~5s, 23:11 PKT 2026-11-22, still running; same storm twice before:
+// 22:22-22:28 and 22:45-22:51). It happens when the bot's identity
+// changes under a customer (re-link to a brand-new number): the phone
+// keeps encrypting to the old session and our side keeps failing the
+// MAC check. The deadlock breaks only when OUR stored session for that
+// sender is deleted — the sender's next retry then establishes a fresh
+// session (standard Signal recovery) instead of re-using the wedged one.
+// The hook is sock.signalRepository.decryptMessage (the choke point for
+// every 1:1 decrypt; verified in the installed lib): on a Bad MAC error
+// we delete the sender's session (once per sender per 5 min) and rethrow
+// so Baileys' normal retry flow continues. The CIPHERTEXT stub never
+// reaches handleIncoming (it returns early on !msg.message, line ~844),
+// so the reset CANNOT live there — it must live on the decrypt path.
+// Session files are `session-<user>.<device>.json` in the auth dir and
+// keys.set with a null value DELETES the file (verified in
+// use-multi-file-auth-state.js: `value ? writeData : removeData`).
+const SESSION_RESET_MIN_GAP_MS = 5 * 60 * 1000;
+const lastSessionReset = new Map(); // sender user digits -> timestamp ms
+
+function sessionIdForJid(jid) {
+  const m = String(jid || '').match(/^(\d+)(?::(\d+))?@/);
+  if (!m) return null;
+  return m[1] + '.' + (m[2] || '0');
+}
+
+async function resetBrokenSession(businessId, sock, jid) {
+  try {
+    if (!sock || !sock.authState || !sock.authState.keys) return false;
+    const sessionId = sessionIdForJid(jid);
+    if (!sessionId) return false;
+    const user = sessionId.split('.')[0];
+    const now = Date.now();
+    if (now - (lastSessionReset.get(user) || 0) < SESSION_RESET_MIN_GAP_MS) return false;
+    lastSessionReset.set(user, now);
+    await sock.authState.keys.set({ session: { [sessionId]: null } });
+    console.log('Reset broken Signal session for', user, '(Bad MAC) — sender will re-key on next retry');
+    return true;
+  } catch (e) {
+    console.error('Failed to reset broken Signal session for', String(jid || ''), e && e.message);
+    return false;
+  }
+}
+
+function wrapDecryptForSessionReset(businessId, sock) {
+  if (!sock || !sock.signalRepository || typeof sock.signalRepository.decryptMessage !== 'function') return;
+  if (sock.signalRepository.__sessionResetWrapped) return;
+  const origDecrypt = sock.signalRepository.decryptMessage.bind(sock.signalRepository);
+  sock.signalRepository.decryptMessage = async (opts) => {
+    try {
+      return await origDecrypt(opts);
+    } catch (err) {
+      if (err && /bad mac/i.test(err.message || '')) {
+        // Fire-and-forget: the decrypt already failed; the reset only
+        // unblocks the sender's NEXT retry, so never hold up this throw.
+        resetBrokenSession(businessId, sock, opts && opts.jid);
+      }
+      throw err;
+    }
+  };
+  sock.signalRepository.__sessionResetWrapped = true;
+}
+
 function isRegistered(businessId) {
   try {
     const creds = JSON.parse(fs.readFileSync(path.join(authDir(businessId), 'creds.json'), 'utf8'));
@@ -294,6 +359,7 @@ async function startSocket(businessId) {
     ...(proxyAgent ? { agent: proxyAgent } : {}),
   });
   sock.ev.on('creds.update', saveCreds);
+  wrapDecryptForSessionReset(businessId, sock);
   const prev = sessions.get(businessId);
   sessions.set(businessId, {
     sock,
@@ -1090,4 +1156,4 @@ async function disconnect(businessId) {
   try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
 }
 
-module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, beginTypingAfterReadPause, waitForMinTyping, READ_PAUSE_MS, MIN_TYPING_MS, MAX_REPLY_WAIT_MS, receiptStatusName, replyJidFor, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers };
+module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, beginTypingAfterReadPause, waitForMinTyping, READ_PAUSE_MS, MIN_TYPING_MS, MAX_REPLY_WAIT_MS, receiptStatusName, replyJidFor, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers, resetBrokenSession, wrapDecryptForSessionReset, sessionIdForJid, SESSION_RESET_MIN_GAP_MS, lastSessionReset };
