@@ -1056,48 +1056,82 @@ function buildImagePrompt(business, customerText, history) {
 }
 async function generateCustomerImage(business, customerText, history) {
   const key = process.env.GEMINI_API_KEY;
-  if (!key || key === 'YOUR_GEMINI_API_KEY_HERE') return { ok: false, reason: 'no-key' };
   const imagePrompt = buildImagePrompt(business, customerText, history);
   let lastReason = 'model-unavailable';
-  for (const model of IMAGE_MODELS) {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 45000);
-      let res;
+  // 1. Gemini image models (free key) — try each in turn.
+  if (key && key !== 'YOUR_GEMINI_API_KEY_HERE') {
+    for (const model of IMAGE_MODELS) {
       try {
-        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: imagePrompt }] }],
-            generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-          }),
-          signal: ctrl.signal,
-        });
-      } finally { clearTimeout(timer); }
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        console.error('Image generation failed:', model, res.status, errText.slice(0, 200));
-        // 404/400 = this model is not available for this key; 429/503
-        // = quota or overload; 403 = this model needs billing on this
-        // key — the NEXT model may have its own quota, so try it
-        // before giving up. (2026-11-21: the first request died on a
-        // 429 "quota exceeded" and the fallback was never tried, so
-        // the customer got no picture at all. 2026-11-22 00:01 PKT:
-        // the 429 WAS retried, but the fallback model itself 404d.)
-        if ([404, 400, 403, 429, 503].includes(res.status)) { lastReason = 'api-' + res.status; continue; }
-        return { ok: false, reason: 'api-' + res.status };
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 45000);
+        let res;
+        try {
+          res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: imagePrompt }] }],
+              generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+            }),
+            signal: ctrl.signal,
+          });
+        } finally { clearTimeout(timer); }
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          console.error('Image generation failed:', model, res.status, errText.slice(0, 200));
+          // 404/400 = this model is not available for this key; 429/503
+          // = quota or overload; 403 = this model needs billing on this
+          // key — the NEXT model may have its own quota, so try it
+          // before giving up. (2026-11-21: the first request died on a
+          // 429 "quota exceeded" and the fallback was never tried, so
+          // the customer got no picture at all. 2026-11-22 00:01 PKT:
+          // the 429 WAS retried, but the fallback model itself 404d.)
+          lastReason = 'api-' + res.status;
+          continue;
+        }
+        const data = await res.json();
+        const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+        const img = parts.find((p) => p.inlineData && /^image\//.test(p.inlineData.mimeType || ''));
+        if (!img) { lastReason = 'no-image-in-response'; continue; }
+        return { ok: true, buffer: Buffer.from(img.inlineData.data, 'base64'), mimeType: img.inlineData.mimeType || 'image/png', prompt: imagePrompt, provider: 'gemini' };
+      } catch (e) {
+        if (e && e.name === 'AbortError') { lastReason = 'timeout'; continue; }
+        console.error('Image generation error:', model, e && e.message);
+        lastReason = 'error';
+        continue;
       }
-      const data = await res.json();
-      const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
-      const img = parts.find((p) => p.inlineData && /^image\//.test(p.inlineData.mimeType || ''));
-      if (!img) return { ok: false, reason: 'no-image-in-response' };
-      return { ok: true, buffer: Buffer.from(img.inlineData.data, 'base64'), mimeType: img.inlineData.mimeType || 'image/png', prompt: imagePrompt };
-    } catch (e) {
-      if (e && e.name === 'AbortError') return { ok: false, reason: 'timeout' };
-      console.error('Image generation error:', model, e && e.message);
-      return { ok: false, reason: 'error' };
     }
+  } else {
+    lastReason = 'no-key';
+  }
+  // 2. Free no-key fallback (2026-11-22): Pollinations (Flux image
+  // model — no key, no account, no billing). The Gemini image quota is
+  // exhausted on this Google account even for a brand-new project +
+  // key: all three models 429 on the very first request (06:22 PKT),
+  // so without a second lane no picture can ever be made. If this
+  // lane also fails, the caller honestly says the team will share it.
+  try {
+    const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(imagePrompt) + '?width=1024&height=1024&model=flux&nologo=true';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
+    let res;
+    try {
+      res = await fetch(url, { signal: ctrl.signal });
+    } finally { clearTimeout(timer); }
+    if (res.ok) {
+      const type = String((res.headers && res.headers.get('content-type')) || '').split(';')[0].trim();
+      if (/^image\//.test(type)) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 1000) return { ok: true, buffer: buf, mimeType: type || 'image/jpeg', prompt: imagePrompt, provider: 'pollinations' };
+      }
+      lastReason = 'pollinations-bad-response';
+    } else {
+      console.error('Image generation failed: pollinations', res.status);
+      lastReason = 'pollinations-' + res.status;
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') lastReason = 'pollinations-timeout';
+    else { console.error('Image generation error: pollinations', e && e.message); lastReason = 'pollinations-error'; }
   }
   return { ok: false, reason: lastReason };
 }
@@ -1117,7 +1151,10 @@ function saveGeneratedImage(business, businessId, generated) {
   try {
     const dir = path.join(store.DATA_DIR, 'uploads', businessId);
     fs.mkdirSync(dir, { recursive: true });
-    const filename = 'gen-' + Date.now() + '.png';
+    // Pollinations returns JPEG — save with the right extension so the
+    // file serves with the correct content-type (Gemini returns PNG).
+    const ext = /jpeg|jpg/.test(generated.mimeType || '') ? '.jpg' : '.png';
+    const filename = 'gen-' + Date.now() + ext;
     fs.writeFileSync(path.join(dir, filename), generated.buffer);
     const item = {
       id: 'media_' + Date.now(), kind: 'image', filename, originalName: filename,
