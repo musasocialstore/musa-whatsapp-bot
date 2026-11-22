@@ -27,6 +27,7 @@ const path = require('path');
 const fs = require('fs');
 const store = require('./src/store');
 const whatsapp = require('./src/whatsapp');
+const activity = require('./src/activity');
 const leads = require('./src/leads');
 const ai = require('./src/ai');
 const linkSetup = require('./src/linkSetup');
@@ -40,6 +41,17 @@ const UPLOAD_ROOT = path.join(store.DATA_DIR, 'uploads');
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+// Private live-activity page (2026-11-22, Zaib): /activity.html is
+// unlisted — no link to it anywhere on the board — and token-gated.
+// A missing or wrong token gets a plain 404, never a hint it exists.
+// This MUST run before express.static, or the file would be served
+// without the check.
+app.use((req, res, next) => {
+  if (req.path !== '/activity.html') return next();
+  const business = store.getBusiness(businessId(req));
+  if (!activity.activityTokenMatches(business, String(req.query.t || ''))) return res.status(404).send('Not found');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media', express.static(UPLOAD_ROOT));
 
@@ -132,12 +144,51 @@ app.get('/api/business/:id/status', (req, res) => {
   const linked = whatsapp.isLiveLinked(id);
   const liveStatus = linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked'));
   res.json({
-    business,
+    business: activity.publicBusiness(business),
     whatsappStatus: liveStatus,
     linked,
     pairingCode: session.pairingCode || null,
     pairingExpiresAt: session.pairingExpiresAt || null,
   });
+});
+
+// --- 7. Private live activity (2026-11-22, Zaib) ---
+// What the owner used to see only in the Railway logs: link status,
+// recent senders, messages received (short previews only), replies
+// sent with delivery state, and connect / disconnect / Bad MAC /
+// session-reset events. Token-gated: a missing or wrong token gets a
+// plain 404, never a hint the page or the data exists. The token
+// itself is never in the response.
+app.get('/api/business/:id/activity', (req, res) => {
+  const id = businessId(req);
+  const business = store.getBusiness(id);
+  if (!activity.activityTokenMatches(business, String(req.query.t || ''))) return res.status(404).json({ error: 'Not found' });
+  const session = whatsapp.getSession(id);
+  const linked = whatsapp.isLiveLinked(id);
+  const events = activity.getActivityEvents(id);
+  res.json({
+    business: { id: business.id, name: business.name },
+    linked,
+    phone: business.phone || '',
+    linkedAt: business.linkedAt || null,
+    whatsappStatus: linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked')),
+    users: activity.summarizeActivityUsers(events, business),
+    events,
+  });
+});
+
+// One-time token bootstrap: mints the activity token ONLY when the
+// business has none yet, and returns it ONCE (with the private page
+// link). After that the endpoint 404s and reveals nothing — the token
+// can never be read back through the board. Call it once, right after
+// deploying, and hand the link to the owner directly.
+app.post('/api/business/:id/activity/token', (req, res) => {
+  const id = businessId(req);
+  const business = store.getBusiness(id);
+  if (business.activityToken) return res.status(404).json({ error: 'Not found' });
+  const token = activity.ensureActivityToken(business);
+  console.log('Activity token created for', id, '(one-time mint — the token itself is never logged)');
+  res.json({ token, url: '/activity.html?businessId=' + encodeURIComponent(id) + '&t=' + token });
 });
 
 app.post('/api/business/:id/disconnect', async (req, res) => {
@@ -161,7 +212,7 @@ app.post('/api/business/:id/settings', (req, res) => {
   if (leadEmail !== undefined) business.leadEmail = String(leadEmail).trim();
   if (leadWhatsapp !== undefined) business.leadWhatsapp = String(leadWhatsapp).replace(/\s/g, '');
   store.saveBusiness(business);
-  res.json({ business });
+  res.json({ business: activity.publicBusiness(business) });
 });
 
 // --- 3. Media upload: images / voice / video ---
