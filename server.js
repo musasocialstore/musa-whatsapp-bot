@@ -104,6 +104,24 @@ app.post('/api/business/:id/pairing-code', async (req, res) => {
   }
 });
 
+// --- LID -> phone number mapping (2026-11-22, Zaib): replies to a
+// LID can land in a different chat thread than the one the customer
+// watches — the receipts proved 14 old replies sit READ on the phone
+// while the watched chat shows none of them. When the owner knows a
+// customer's real phone number, set it here and the bot replies to
+// the phone-number chat instead (see replyJidFor in src/whatsapp.js).
+app.post('/api/business/:id/lid-phone', async (req, res) => {
+  const id = businessId(req);
+  const business = store.getBusiness(id);
+  const lid = String((req.body || {}).lid || '').replace(/\D/g, '');
+  const phone = normalizePhone((req.body || {}).phone);
+  if (!lid || !phone || phone.length < 10 || phone.length > 15) return res.status(400).json({ error: 'lid (digits) and a valid phone number are required' });
+  business.lidToPhone = business.lidToPhone || {};
+  business.lidToPhone[lid] = phone;
+  store.saveBusiness(business);
+  res.json({ ok: true, lid, phone, replyJid: phone + '@s.whatsapp.net' });
+});
+
 app.get('/api/business/:id/status', (req, res) => {
   const id = businessId(req);
   const business = store.getBusiness(id);
