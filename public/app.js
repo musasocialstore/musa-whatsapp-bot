@@ -8,6 +8,8 @@
 const $ = (id) => document.getElementById(id);
 const has = (id) => !!$(id);
 let statusTimer = null;
+let poolTimer = null;
+let poolClaimed = null; // number this business claimed from the admin pool, if any
 let countdownTimer = null;
 let countdownEndsAt = 0;
 let loadedOnce = false;
@@ -152,6 +154,66 @@ async function getCode() {
   finally { btn.disabled = false; btn.textContent = 'Get pairing code'; }
 }
 
+// --- Claim a number from the admin pool (Connect page only) ---
+// Claiming is NOT linking: it only reserves the number for this
+// business. The user still links it with "Get pairing code" below.
+// One number per business — once claimed, the Claim buttons are
+// disabled and the claimed number is filled into the phone input.
+async function loadPool() {
+  if (!has('poolList')) return;
+  const id = businessId();
+  const el = $('poolList');
+  if (!id) {
+    poolClaimed = null;
+    el.innerHTML = '<p class="muted empty-note">Enter your Business ID above to see available numbers.</p>';
+    return;
+  }
+  try {
+    const avail = await apiJson('/api/pool/available');
+    const list = Array.isArray(avail) ? avail : (avail.numbers || avail.available || avail.pool || []);
+    // Has this business already claimed a number?
+    let claimedPhone = null;
+    try {
+      const c = await apiJson(api('/pool/claim'));
+      claimedPhone = c.claimedPhone || c.phone || c.claimed || null;
+      if (claimedPhone && typeof claimedPhone === 'object') claimedPhone = claimedPhone.phone || null;
+    } catch (e) { /* no claim yet — the pool stays claimable */ }
+    poolClaimed = claimedPhone || null;
+    const note = $('poolNote');
+    if (claimedPhone) {
+      if (note) note.textContent = 'You claimed ' + claimedPhone + ' — now link it with a pairing code below.';
+      if (has('phone')) $('phone').value = claimedPhone;
+    } else if (note) {
+      note.textContent = '';
+    }
+    if (!list.length) {
+      el.innerHTML = '<p class="muted empty-note">No numbers available right now — check back later.</p>';
+      return;
+    }
+    el.innerHTML = list.map((n) => {
+      const phone = typeof n === 'string' ? n : (n.phone || '');
+      if (!phone) return '';
+      const dis = claimedPhone ? ' disabled' : '';
+      return '<div class="pool-row"><b>' + esc(phone) + '</b>' +
+        '<button class="small" type="button" onclick="claimPoolNumber(\'' + esc(phone) + '\')"' + dis + '>Claim</button></div>';
+    }).join('');
+  } catch (e) { /* pool could not be loaded — list stays as it was, no toast spam */ }
+}
+
+async function claimPoolNumber(phone) {
+  if (!has('poolList')) return;
+  try {
+    const d = await apiJson(api('/pool/claim'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    });
+    const claimed = (d && (d.claimedPhone || d.phone)) || phone;
+    toast('Number claimed — now link it with a pairing code.');
+    if (has('phone')) $('phone').value = claimed;
+    loadPool();
+  } catch (e) { toast(e.message); }
+}
+
 async function refreshStatus() {
   let id;
   try { id = businessId(); } catch (e) { if (!loadedOnce) toast(e.message); return; }
@@ -196,7 +258,9 @@ async function refreshStatus() {
     if (!loadedOnce) {
       loadedOnce = true;
       if (has('name') && d.business.name) $('name').value = d.business.name;
-      if (has('phone') && d.business.phone) $('phone').value = d.business.phone;
+      // A claimed pool number wins over the saved phone — never
+      // overwrite it with an older saved number on first load.
+      if (has('phone') && d.business.phone && !poolClaimed) $('phone').value = d.business.phone;
       if (has('prompt') && d.business.prompt) { $('prompt').value = d.business.prompt; updatePromptCount(); if (has('savedPrompt')) { $('savedPrompt').textContent = d.business.prompt; $('savedPromptWrap').style.display = ''; } }
       if (has('leadEmail') && d.business.leadEmail) $('leadEmail').value = d.business.leadEmail;
       if (has('leadWhatsapp') && d.business.leadWhatsapp) $('leadWhatsapp').value = d.business.leadWhatsapp;
@@ -388,6 +452,10 @@ function startAutoRefresh() {
   if (statusTimer) clearInterval(statusTimer);
   // Live status: every 15s, but only when a Business ID is entered.
   statusTimer = setInterval(() => { if (businessId()) refreshStatus(); }, 15000);
+  // Pool list (Connect page only): every 10s, alongside the status timer.
+  if (poolTimer) clearInterval(poolTimer);
+  poolTimer = null;
+  if (has('poolList')) poolTimer = setInterval(() => { loadPool(); }, 10000);
 }
 
 // New visitor, no Business ID yet: explain that the board is empty
@@ -460,6 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updatePromptCount();
   }
   if (businessId()) refreshStatus();
+  if (has('poolList')) loadPool();
   if (has('mediaList')) loadMedia();
   if (has('leads')) loadLeads();
   startAutoRefresh();
