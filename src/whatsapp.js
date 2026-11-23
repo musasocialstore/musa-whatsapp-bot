@@ -28,6 +28,7 @@ const store = require('./store');
 const ai = require('./ai');
 const leads = require('./leads');
 const activity = require('./activity');
+const stats = require('./stats');
 
 const sessions = new Map(); // businessId -> { sock, status, pairingCode }
 const histories = new Map(); // businessId:customerJid -> [{role, text}]
@@ -969,6 +970,10 @@ async function handleIncoming(businessId, sock, msg) {
       preview: activity.activityPreview(text),
     });
   }
+  // Lifetime counter for the admin dashboard (saved on disk — survives
+  // restarts). Only messages with text reach here (empty ones returned
+  // above), so this counts real incoming messages, nothing else.
+  stats.inc('incoming');
   // Learn the customer's real number when they type it (2026-11-22):
   // from then on, replies to this LID go to the phone-number chat
   // instead (see replyJidFor). The typed number is the customer's own
@@ -1108,6 +1113,9 @@ async function handleIncoming(businessId, sock, msg) {
     preview: activity.activityPreview(reply.text),
     delivery: replySent ? 'sent' : 'failed',
   });
+  // Lifetime counter for the admin dashboard (saved on disk). Only a
+  // reply that actually went out counts — a failed send stays uncounted.
+  if (replySent) stats.inc('replies');
 
   // Confirmation flow: when the customer has fully confirmed their
   // order, the bot says so in the team's words and the conversation

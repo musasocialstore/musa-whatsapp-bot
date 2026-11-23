@@ -18,10 +18,13 @@ const POOL_FILE = path.join(store.DATA_DIR, 'number-pool.json');
 function loadPool() {
   try {
     const data = JSON.parse(fs.readFileSync(POOL_FILE, 'utf8'));
-    if (data && Array.isArray(data.numbers)) return data;
-    return { numbers: [] };
+    if (data && Array.isArray(data.numbers)) {
+      // Old pool files have no history — it starts empty, never crashes.
+      return { numbers: data.numbers, history: Array.isArray(data.history) ? data.history : [] };
+    }
+    return { numbers: [], history: [] };
   } catch (_) {
-    return { numbers: [] };
+    return { numbers: [], history: [] };
   }
 }
 
@@ -124,4 +127,35 @@ function releaseNumber(pool, business, phone) {
   return { ok: true, phone: normalized };
 }
 
-module.exports = { POOL_FILE, loadPool, savePool, normalizePoolPhone, addNumbersToPool, claimNumber, releaseNumber };
+// Upload history (2026-11-23, Zaib: "vah record bhi sev hoga"): every
+// admin upload is saved in the pool file, so the record survives a
+// restart and the dashboard can show how many numbers were ever
+// uploaded. `result` is the { added, skipped, invalid } arrays from
+// addNumbersToPool. History is capped so the file never grows without
+// bound — the oldest entries drop off first.
+const POOL_HISTORY_MAX = 50;
+
+function recordPoolUpload(pool, result) {
+  pool.numbers = Array.isArray(pool.numbers) ? pool.numbers : [];
+  pool.history = Array.isArray(pool.history) ? pool.history : [];
+  pool.history.push({
+    at: new Date().toISOString(),
+    added: Array.isArray(result && result.added) ? result.added.slice() : [],
+    skipped: Array.isArray(result && result.skipped) ? result.skipped.slice() : [],
+    invalid: Array.isArray(result && result.invalid) ? result.invalid.slice() : [],
+  });
+  while (pool.history.length > POOL_HISTORY_MAX) pool.history.shift();
+  return pool.history[pool.history.length - 1];
+}
+
+// Total numbers ever uploaded to the pool (sum of every history entry's
+// added list) — the dashboard's "numbers uploaded" card. Releases do
+// not subtract: the number WAS uploaded, and the pool list itself shows
+// what is still there.
+function totalNumbersUploaded(pool) {
+  let total = 0;
+  for (const h of (pool && pool.history) || []) total += (h.added || []).length;
+  return total;
+}
+
+module.exports = { POOL_FILE, loadPool, savePool, normalizePoolPhone, addNumbersToPool, claimNumber, releaseNumber, recordPoolUpload, totalNumbersUploaded, POOL_HISTORY_MAX };
