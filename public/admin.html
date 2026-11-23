@@ -7,8 +7,9 @@
 <title>Musa WhatsApp Bot Platform — Admin Panel</title>
 <link rel="stylesheet" href="/style.css?v=20261123">
 <style>
-/* Admin Panel page only: rows inside the section cards. Same white +
-   dark-blue 3D language as the Live Activity page — no other colors. */
+/* Admin Panel page only. Same white + dark-blue 3D language as the
+   board (style.css) — navy #0a2a6b / navy-deep #071d4d on white, no
+   other colors. Premium dashboard: navy hero, stat cards, split users. */
 .live-dot { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--green-dark); }
 .live-dot i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); flex: none; box-shadow: 0 0 0 2px var(--green-tint); }
 .act-row { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--border); border-radius: 16px; padding: 13px 14px; margin: 0 0 10px; background: #ffffff; }
@@ -26,55 +27,133 @@
 .card-head h2 { margin: 0; flex: 1; }
 .private-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 800; background: var(--navy-tint); color: var(--navy-deep); white-space: nowrap; }
 .private-badge svg { width: 13px; height: 13px; }
+/* Navy hero — the dashboard header. White text on the board navy. */
+.hero { background: linear-gradient(135deg, var(--navy-deep) 0%, var(--navy) 60%, var(--navy-soft) 100%); border-radius: var(--radius-card); padding: 20px 18px 18px; margin: 0 0 12px; box-shadow: var(--shadow-card); color: #ffffff; }
+.hero h2 { margin: 0 0 4px; font-size: 24px; line-height: 1.2; letter-spacing: -.02em; font-weight: 800; color: #ffffff; }
+.hero p { margin: 6px 0 0; color: rgba(255, 255, 255, .82); font-size: 14.5px; }
+.hero .live-dot { color: #ffffff; }
+.hero .live-dot i { box-shadow: 0 0 0 2px rgba(255, 255, 255, .25); }
+.hero button { margin-top: 12px; }
+/* Stat cards: the board's own .stats grid, 12 cards, 3 per row. */
+.stats.admin-stats { margin-bottom: 12px; }
+.stats.admin-stats .stat { padding: 16px 8px 13px; }
+.stats.admin-stats .stat-num { font-size: 26px; }
+/* Users split: active on one side, other users on the other side. */
+.user-split { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 720px) { .user-split { grid-template-columns: 1fr 1fr; } }
+.split-panel { border: 1px solid var(--border); border-radius: 16px; padding: 13px 13px 4px; background: #ffffff; min-width: 0; }
+.split-panel .card-head { margin-bottom: 8px; }
+.split-panel h3 { margin: 0; flex: 1; font-size: 15.5px; font-weight: 800; }
+.split-panel .count-pill { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 800; background: var(--navy-tint); color: var(--navy-deep); white-space: nowrap; }
+/* Drawer: the Add Number form lives INSIDE the burger menu, below the
+   nav links. The nav scrolls, so the form is always reachable. */
+.drawer-nav { flex: 1 1 auto; min-height: 0; }
+.drawer-add { border-top: 1px solid var(--border-soft); margin-top: 12px; padding-top: 14px; }
+.drawer-add h3 { margin: 0 0 4px; font-size: 15.5px; font-weight: 800; }
+.drawer-add p { margin: 0 0 8px; color: var(--muted); font-size: 13.5px; }
+.drawer-add textarea { width: 100%; min-height: 96px; }
+.drawer-add button { width: 100%; }
+.drawer-add .muted { font-size: 13px; }
+.section-note { margin: 0 0 10px; }
+.link-like { background: none; border: 0; padding: 0; margin: 0; color: var(--navy); font: inherit; font-weight: 700; cursor: pointer; box-shadow: none; text-decoration: underline; }
+.link-like:hover { filter: none; }
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-inner">
+    <button class="burger-btn" id="burgerBtn" type="button" aria-label="Menu" aria-controls="drawer" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
     <div class="brand-name">Musa <em>WhatsApp Bot</em></div>
     <span class="private-badge" style="margin-left:auto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Private</span>
   </div>
 </header>
 
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<aside class="drawer" id="drawer" aria-label="Menu">
+  <div class="drawer-head">
+    <span class="drawer-title">Musa <em>WhatsApp Bot</em></span>
+    <button class="drawer-close" id="drawerClose" type="button" aria-label="Close menu"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <nav class="drawer-nav">
+    <a href="#dashboardSection" data-section="dashboardSection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Dashboard</a>
+    <a href="#usersSection" data-section="usersSection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users</a>
+    <a href="#drawerAddBlock" data-action="add-number"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Add Number</a>
+    <a href="#bulkSection" data-section="bulkSection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>Bulk campaigns</a>
+    <div class="drawer-add" id="drawerAddBlock">
+      <h3>Add Number</h3>
+      <p>Upload WhatsApp numbers to the pool. Users claim one each from the Connect page — the numbers show there too.</p>
+      <label for="poolNumbers">Numbers to add</label>
+      <textarea id="poolNumbers" rows="4" placeholder="One number per line (or comma separated)"></textarea>
+      <button type="button" onclick="addPoolNumbers()">Add numbers</button>
+      <p class="muted" id="poolAddNote" style="margin:10px 0 0"></p>
+    </div>
+  </nav>
+</aside>
+
 <main>
   <h1 class="page-title">Admin Panel</h1>
 
   <div class="scroll-area" id="scrollArea">
-    <section class="card" id="overviewCard">
-      <div class="card-head">
-        <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
-        <h2>Overview</h2>
-        <span class="private-badge" id="bizCount"></span>
-      </div>
-      <p class="muted" id="overviewLine" style="margin:0">Checking…</p>
-      <p style="margin:10px 0 0"><span class="live-dot"><i></i>Live — updates every 10 seconds</span> <span class="muted" id="updatedAt"></span></p>
+    <section class="hero" id="dashboardSection">
+      <h2>Admin Dashboard</h2>
+      <p id="overviewLine">Checking…</p>
+      <p><span class="live-dot"><i></i>Live — updates every 10 seconds</span> <span id="updatedAt"></span></p>
       <button class="secondary small" type="button" onclick="loadOverview()">Refresh now</button>
     </section>
 
-    <section class="card">
+    <div class="stats admin-stats" id="statGrid">
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><div class="stat-num" id="statTotalUsers">0</div><div class="stat-label">Total users</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg></span><div class="stat-num" id="statActiveUsers">0</div><div class="stat-label">Active users</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/></svg></span><div class="stat-num" id="statOtherUsers">0</div><div class="stat-label">Other users</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span><div class="stat-num" id="statLinked">0</div><div class="stat-label">Linked</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M5.17 11.75l-1.72 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="2" y1="2" x2="22" y2="22"/><path d="M9.25 5.48l2.55-2.55"/><path d="M14.75 18.52l-2.55 2.55"/></svg></span><div class="stat-num" id="statNotLinked">0</div><div class="stat-label">Not linked</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span><div class="stat-num" id="statReceived">0</div><div class="stat-label">Messages received</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span><div class="stat-num" id="statSent">0</div><div class="stat-label">Messages sent</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span><div class="stat-num" id="statNumbersUploaded">0</div><div class="stat-label">Numbers uploaded</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span><div class="stat-num" id="statCampaignsUsed">0</div><div class="stat-label">Businesses using campaigns</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span><div class="stat-num" id="statCampaignReach">0</div><div class="stat-label">Campaign reach</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span><div class="stat-num" id="statNumbersEntered">0</div><div class="stat-label">Numbers entered</div></div>
+      <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg></span><div class="stat-num" id="statCampaignMessages">0</div><div class="stat-label">Campaign messages sent</div></div>
+    </div>
+    <p class="muted section-note" id="savedNote">All counts are saved on the server — they survive restarts.</p>
+
+    <section class="card" id="usersSection">
       <div class="card-head">
         <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-        <h2>Total users</h2>
+        <h2>Users</h2>
         <span class="private-badge" id="totalUsersCount"></span>
       </div>
-      <div id="businessList"><p class="empty-note">No users yet.</p></div>
+      <div class="user-split">
+        <div class="split-panel">
+          <div class="card-head">
+            <h3>Active users</h3>
+            <span class="count-pill" id="activeUsersCount"></span>
+          </div>
+          <div id="activeUserList"><p class="empty-note">No active users yet.</p></div>
+        </div>
+        <div class="split-panel">
+          <div class="card-head">
+            <h3>Other users</h3>
+            <span class="count-pill" id="otherUsersCount"></span>
+          </div>
+          <div id="otherUserList"><p class="empty-note">No other users.</p></div>
+        </div>
+      </div>
     </section>
 
-    <section class="card">
+    <section class="card" id="poolSection">
       <div class="card-head">
         <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>
         <h2>Number pool</h2>
         <span class="private-badge" id="poolCount"></span>
       </div>
-      <label for="poolNumbers">Add numbers to the pool</label>
-      <textarea id="poolNumbers" rows="4" placeholder="One number per line (or comma separated)"></textarea>
-      <button type="button" onclick="addPoolNumbers()">Add numbers</button>
-      <p class="muted" id="poolAddNote" style="margin:10px 0 0"></p>
-      <hr>
-      <div id="poolList"><p class="empty-note">Pool is empty — upload numbers below.</p></div>
+      <p class="muted section-note">Add numbers from the menu — <button class="link-like" type="button" onclick="openDrawer()">open the menu</button>. Uploaded numbers also show on the user board (Connect page), where users claim one each.</p>
+      <div id="poolList"><p class="empty-note">Pool is empty — add numbers from the menu.</p></div>
+      <h3 style="margin:18px 0 8px">Upload history</h3>
+      <div id="poolHistoryList"><p class="empty-note">No uploads yet — every upload is saved here.</p></div>
     </section>
 
-    <section class="card">
+    <section class="card" id="bulkSection">
       <div class="card-head">
         <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>
         <h2>Bulk campaigns</h2>
@@ -118,6 +197,31 @@
   function countTokens(value) {
     return value.split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; }).length;
   }
+  function setText(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = String(value == null ? 0 : value);
+  }
+
+  // --- Burger drawer (same pattern as the board's own drawer) ---
+  function openDrawer() {
+    var d = document.getElementById('drawer'), o = document.getElementById('drawerOverlay'), b = document.getElementById('burgerBtn');
+    if (d) d.classList.add('open');
+    if (o) o.classList.add('open');
+    if (b) b.setAttribute('aria-expanded', 'true');
+  }
+  function closeDrawer() {
+    var d = document.getElementById('drawer'), o = document.getElementById('drawerOverlay'), b = document.getElementById('burgerBtn');
+    if (d) d.classList.remove('open');
+    if (o) o.classList.remove('open');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  }
+  window.openDrawer = openDrawer;
+  window.closeDrawer = closeDrawer;
+  function goSection(id) {
+    closeDrawer();
+    var el = document.getElementById(id);
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   function showPrivate() {
     if (timer) { clearInterval(timer); timer = null; }
@@ -131,43 +235,57 @@
     return '<span class="badge not-linked">Not linked</span>';
   }
 
+  function userRow(b) {
+    var t = b.totals || {};
+    var meta = esc(b.id || '');
+    if (b.businessType) meta += ' · ' + esc(b.businessType);
+    if (b.whatsappStatus) meta += ' · ' + esc(b.whatsappStatus);
+    var phoneLine = 'Phone: ' + (b.phone || '—');
+    if (b.claimedPhone) phoneLine += ' · Claimed: ' + b.claimedPhone;
+    return '<div class="act-row"><span class="act-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>' +
+      '<div class="act-body"><b>' + esc(b.name || b.id || '') + '</b>' +
+      '<span class="act-sub">' + meta + '</span>' +
+      '<span class="act-sub">' + esc(phoneLine) + '</span>' +
+      '<span class="act-sub">' + esc(t.users || 0) + ' users · ' + esc(t.incoming || 0) + ' messages in · ' + esc(t.replies || 0) + ' replies out</span></div>' +
+      linkBadge(b) + '</div>';
+  }
+
   function render(data) {
     var businesses = data.businesses || [];
     var pool = data.pool || [];
-    var totalUsers = 0, totalIn = 0, totalOut = 0;
-    businesses.forEach(function (b) {
-      var t = b.totals || {};
-      totalUsers += t.users || 0;
-      totalIn += t.incoming || 0;
-      totalOut += t.replies || 0;
-    });
+    var history = data.history || [];
+    var totals = data.totals || {};
     var available = pool.filter(function (p) { return p.status !== 'claimed'; }).length;
+    var active = businesses.filter(function (b) { return b.linked; });
+    var other = businesses.filter(function (b) { return !b.linked; });
 
-    document.getElementById('bizCount').textContent = businesses.length + (businesses.length === 1 ? ' business' : ' businesses');
+    // Dashboard stat cards — every number from the server, never guessed.
+    setText('statTotalUsers', totals.totalUsers != null ? totals.totalUsers : businesses.length);
+    setText('statActiveUsers', totals.activeUsers != null ? totals.activeUsers : active.length);
+    setText('statOtherUsers', totals.otherUsers != null ? totals.otherUsers : other.length);
+    setText('statLinked', totals.linked != null ? totals.linked : active.length);
+    setText('statNotLinked', totals.notLinked != null ? totals.notLinked : other.length);
+    setText('statReceived', totals.received || 0);
+    setText('statSent', totals.sent || 0);
+    setText('statNumbersUploaded', totals.numbersUploaded || 0);
+    setText('statCampaignsUsed', totals.campaignsUsed || 0);
+    setText('statCampaignReach', totals.campaignReach || 0);
+    setText('statNumbersEntered', totals.numbersEntered || 0);
+    setText('statCampaignMessages', totals.campaignMessages || 0);
+
     document.getElementById('overviewLine').textContent =
       businesses.length + (businesses.length === 1 ? ' business' : ' businesses') +
-      ' · ' + totalUsers + (totalUsers === 1 ? ' user' : ' users') +
-      ' · ' + pool.length + (pool.length === 1 ? ' number' : ' numbers') + ' in the pool (' + available + ' available)';
+      ' · ' + active.length + ' active · ' + pool.length + (pool.length === 1 ? ' number' : ' numbers') + ' in the pool (' + available + ' available)';
     document.getElementById('updatedAt').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
-    // (1) Total users — one row per business.
-    document.getElementById('totalUsersCount').textContent = String(totalUsers);
-    document.getElementById('businessList').innerHTML = businesses.length ? businesses.map(function (b) {
-      var t = b.totals || {};
-      var meta = esc(b.id || '');
-      if (b.businessType) meta += ' · ' + esc(b.businessType);
-      if (b.whatsappStatus) meta += ' · ' + esc(b.whatsappStatus);
-      var phoneLine = 'Phone: ' + (b.phone || '—');
-      if (b.claimedPhone) phoneLine += ' · Claimed: ' + b.claimedPhone;
-      return '<div class="act-row"><span class="act-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>' +
-        '<div class="act-body"><b>' + esc(b.name || b.id || '') + '</b>' +
-        '<span class="act-sub">' + meta + '</span>' +
-        '<span class="act-sub">' + esc(phoneLine) + '</span>' +
-        '<span class="act-sub">' + esc(t.users || 0) + ' users · ' + esc(t.incoming || 0) + ' messages in · ' + esc(t.replies || 0) + ' replies out</span></div>' +
-        linkBadge(b) + '</div>';
-    }).join('') : '<p class="empty-note">No users yet.</p>';
+    // Users — active on one side, other users on the other side.
+    document.getElementById('totalUsersCount').textContent = String(businesses.length);
+    document.getElementById('activeUsersCount').textContent = String(active.length);
+    document.getElementById('otherUsersCount').textContent = String(other.length);
+    document.getElementById('activeUserList').innerHTML = active.length ? active.map(userRow).join('') : '<p class="empty-note">No active users yet.</p>';
+    document.getElementById('otherUserList').innerHTML = other.length ? other.map(userRow).join('') : '<p class="empty-note">No other users.</p>';
 
-    // (2) Number pool — one row per number.
+    // Number pool — one row per number.
     document.getElementById('poolCount').textContent = available + ' available';
     document.getElementById('poolList').innerHTML = pool.length ? pool.map(function (p) {
       var claimed = p.status === 'claimed';
@@ -180,14 +298,28 @@
         '<span class="act-sub">' + esc(sub) + '</span></div>' +
         pill +
         (claimed ? ' <button class="small danger" type="button" onclick="releasePoolNumber(\'' + esc(p.phone) + '\')">Release</button>' : '') + '</div>';
-    }).join('') : '<p class="empty-note">Pool is empty — upload numbers below.</p>';
+    }).join('') : '<p class="empty-note">Pool is empty — add numbers from the menu.</p>';
 
-    // (3) Bulk campaigns — one row per business, reusing the bulk page.
+    // Upload history — every upload is saved, newest first.
+    document.getElementById('poolHistoryList').innerHTML = history.length ? history.slice().reverse().map(function (h) {
+      var added = h.added || [], skipped = h.skipped || [], invalid = h.invalid || [];
+      var shown = added.slice(0, 8).join(', ');
+      if (added.length > 8) shown += ' + ' + (added.length - 8) + ' more';
+      var sub = 'Added ' + added.length + ' · Skipped ' + skipped.length + ' · Invalid ' + invalid.length;
+      if (shown) sub += ' — ' + shown;
+      return '<div class="act-row"><span class="act-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>' +
+        '<div class="act-body"><b>' + esc(fmtTime(h.at) || 'Upload') + '</b>' +
+        '<span class="act-sub">' + esc(sub) + '</span></div></div>';
+    }).join('') : '<p class="empty-note">No uploads yet — every upload is saved here.</p>';
+
+    // Bulk campaigns — one row per business, reusing the bulk page.
     document.getElementById('bulkCount').textContent = String(businesses.length);
     document.getElementById('bulkList').innerHTML = businesses.length ? businesses.map(function (b) {
+      var c = b.campaigns || {};
       return '<div class="act-row"><span class="act-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>' +
         '<div class="act-body"><b>' + esc(b.name || b.id || '') + '</b>' +
-        '<span class="act-sub">' + esc(b.id || '') + '</span></div>' +
+        '<span class="act-sub">' + esc(b.id || '') + '</span>' +
+        '<span class="act-sub">' + esc(c.count || 0) + ' campaigns · ' + esc(c.numbers || 0) + ' numbers entered · ' + esc(c.reached || 0) + ' reached</span></div>' +
         '<button class="small" type="button" onclick="openBulk(\'' + esc(b.id) + '\')">Open bulk</button></div>';
     }).join('') : '<p class="empty-note">No businesses yet.</p>';
   }
@@ -255,6 +387,33 @@
     localStorage.setItem('musa-business-id', id);
     location.href = '/bulk.html';
   };
+
+  // Burger drawer wiring — closes on item tap, outside tap, or X.
+  (function wireDrawer() {
+    var burger = document.getElementById('burgerBtn');
+    if (burger) burger.addEventListener('click', function () {
+      var d = document.getElementById('drawer');
+      if (d && d.classList.contains('open')) closeDrawer(); else openDrawer();
+    });
+    var dClose = document.getElementById('drawerClose');
+    if (dClose) dClose.addEventListener('click', closeDrawer);
+    var dOverlay = document.getElementById('drawerOverlay');
+    if (dOverlay) dOverlay.addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
+    var links = document.querySelectorAll('.drawer-nav a[data-section]');
+    for (var i = 0; i < links.length; i++) {
+      links[i].addEventListener('click', function (e) {
+        e.preventDefault();
+        goSection(this.getAttribute('data-section'));
+      });
+    }
+    var addLink = document.querySelector('.drawer-nav a[data-action="add-number"]');
+    if (addLink) addLink.addEventListener('click', function (e) {
+      e.preventDefault();
+      var ta = document.getElementById('poolNumbers');
+      if (ta) { ta.scrollIntoView({ behavior: 'smooth', block: 'center' }); ta.focus(); }
+    });
+  })();
 
   loadOverview();
   timer = setInterval(loadOverview, 10000);
