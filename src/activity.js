@@ -134,6 +134,33 @@ function summarizeActivityUsers(events, business) {
   return Array.from(byFrom.values()).sort((a, b) => String(b.lastSeen).localeCompare(String(a.lastSeen)));
 }
 
+// The business type shown on the activity page: the brain's distilled
+// category first ("Website development"), else the first "Category:"
+// line from the prompt the owner taught the brain. Empty when neither
+// exists — the page then shows just the business name.
+function activityBusinessType(business) {
+  if (!business) return '';
+  if (business.brainSummary && typeof business.brainSummary.category === 'string' && business.brainSummary.category.trim()) {
+    return business.brainSummary.category.trim();
+  }
+  const prompt = typeof business.prompt === 'string' ? business.prompt : '';
+  const m = prompt.match(/Category:\s*([^\n\r]+)/);
+  return m ? m[1].trim() : '';
+}
+
+// Total details for the page headers: how many users, how many
+// messages came in, how many replies went out, how many events in all
+// (within the last-100 window the page shows).
+function activityTotals(events, users) {
+  const list = events || [];
+  return {
+    users: (users || []).length,
+    incoming: list.filter((e) => e.type === 'incoming').length,
+    replies: list.filter((e) => e.type === 'reply').length,
+    events: list.length,
+  };
+}
+
 // --- Private token ---
 // One random token per business, stored on the business record
 // (businesses.json on the server volume — survives restarts). It is
@@ -181,6 +208,8 @@ module.exports = {
   getActivityEvents,
   updateReplyDelivery,
   summarizeActivityUsers,
+  activityBusinessType,
+  activityTotals,
   generateActivityToken,
   ensureActivityToken,
   activityTokenMatches,
