@@ -51,6 +51,7 @@
         <span class="badge not-linked" id="linkBadge">Not linked</span>
       </div>
       <p class="muted" id="linkLine" style="margin:0">Checking…</p>
+      <p class="muted" id="bizLine" style="margin:10px 0 0"></p>
       <p style="margin:10px 0 0"><span class="live-dot"><i></i>Live — updates every 10 seconds</span> <span class="muted" id="updatedAt"></span></p>
       <button class="secondary small" type="button" onclick="loadActivity()">Refresh now</button>
     </section>
@@ -59,6 +60,7 @@
       <div class="card-head">
         <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
         <h2>Users</h2>
+        <span class="private-badge" id="usersCount"></span>
       </div>
       <div id="usersList"><p class="empty-note">No users yet.</p></div>
     </section>
@@ -67,6 +69,7 @@
       <div class="card-head">
         <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
         <h2>Messages received</h2>
+        <span class="private-badge" id="incomingCount"></span>
       </div>
       <div id="incomingList"><p class="empty-note">No messages yet.</p></div>
     </section>
@@ -75,6 +78,7 @@
       <div class="card-head">
         <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></span>
         <h2>Replies sent</h2>
+        <span class="private-badge" id="repliesCount"></span>
       </div>
       <div id="repliesList"><p class="empty-note">No replies yet.</p></div>
     </section>
@@ -83,6 +87,7 @@
       <div class="card-head">
         <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
         <h2>Events</h2>
+        <span class="private-badge" id="eventsCount"></span>
       </div>
       <div id="eventsList"><p class="empty-note">No events yet.</p></div>
     </section>
@@ -167,7 +172,15 @@
     }
     document.getElementById('updatedAt').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
+    var biz = document.getElementById('bizLine');
+    var bname = (data.business && data.business.name) || '';
+    biz.textContent = bname + (data.businessType ? ' · ' + data.businessType : '');
+
+    var totals = data.totals || {};
+    function setCount(id, n) { var el = document.getElementById(id); if (el) el.textContent = String(n); }
+
     var users = data.users || [];
+    setCount('usersCount', totals.users != null ? totals.users : users.length);
     document.getElementById('usersList').innerHTML = users.length ? users.map(function (u) {
       return '<div class="act-row"><span class="act-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>' +
         '<div class="act-body"><b>' + esc(u.name || u.phone || u.from) + '</b>' +
@@ -177,6 +190,7 @@
 
     var events = data.events || [];
     var incoming = events.filter(function (e) { return e.type === 'incoming'; });
+    setCount('incomingCount', totals.incoming != null ? totals.incoming : incoming.length);
     document.getElementById('incomingList').innerHTML = incoming.length ? incoming.map(function (e) {
       return '<div class="act-row"><span class="act-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>' +
         '<div class="act-body"><b>' + esc(senderLabel(e)) + '</b>' +
@@ -186,6 +200,7 @@
     }).join('') : '<p class="empty-note">No messages yet.</p>';
 
     var replies = events.filter(function (e) { return e.type === 'reply'; });
+    setCount('repliesCount', totals.replies != null ? totals.replies : replies.length);
     document.getElementById('repliesList').innerHTML = replies.length ? replies.map(function (e) {
       var to = e.to || e.from || '';
       var toLabel = to.endsWith('@s.whatsapp.net') ? to.split('@')[0] : to;
@@ -198,6 +213,7 @@
     var timeline = events.filter(function (e) {
       return e.type === 'connect' || e.type === 'disconnect' || e.type === 'badmac' || e.type === 'session-reset';
     });
+    setCount('eventsCount', totals.events != null ? totals.events : timeline.length);
     document.getElementById('eventsList').innerHTML = timeline.length ? timeline.map(function (e) {
       return '<div class="act-row">' + iconFor(e.type) +
         '<div class="act-body"><b>' + eventText(e) + '</b></div>' +
