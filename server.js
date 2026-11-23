@@ -28,6 +28,7 @@ const fs = require('fs');
 const store = require('./src/store');
 const whatsapp = require('./src/whatsapp');
 const activity = require('./src/activity');
+const numberPool = require('./src/number-pool');
 const leads = require('./src/leads');
 const ai = require('./src/ai');
 const linkSetup = require('./src/linkSetup');
@@ -50,6 +51,17 @@ app.use((req, res, next) => {
   if (req.path !== '/activity.html') return next();
   const business = store.getBusiness(businessId(req));
   if (!activity.activityTokenMatches(business, String(req.query.t || ''))) return res.status(404).send('Not found');
+  next();
+});
+// Private admin page (2026-11-23, Zaib): /admin.html is unlisted and
+// token-gated against the owner's (musa-social-store) activity token,
+// same shape as the /activity.html gate above. A missing or wrong
+// token gets a plain 404, never a hint it exists. This MUST run before
+// express.static, or the file would be served without the check.
+app.use((req, res, next) => {
+  if (req.path !== '/admin.html') return next();
+  const owner = store.getBusiness('musa-social-store');
+  if (!activity.activityTokenMatches(owner, String(req.query.t || ''))) return res.status(404).send('Not found');
   next();
 });
 app.use(express.static(path.join(__dirname, 'public')));
@@ -192,6 +204,118 @@ app.post('/api/business/:id/activity/token', (req, res) => {
   const token = activity.ensureActivityToken(business);
   console.log('Activity token created for', id, '(one-time mint — the token itself is never logged)');
   res.json({ token, url: '/activity.html?businessId=' + encodeURIComponent(id) + '&t=' + token });
+});
+
+// --- 8. Number pool + admin overview (2026-11-23, Zaib) ---
+// The owner keeps a pool of WhatsApp numbers (number-pool.json). A
+// business claims ONE number from the pool and that number becomes its
+// own WhatsApp number (business.phone). Claiming is NOT linking — the
+// number still has to be linked on the Connect page with a pairing
+// code. All admin endpoints are gated on the owner's activity token:
+// a missing or wrong token gets a plain 404, never a hint the data
+// exists. The token itself is never in any response. Claim / release
+// handlers are synchronous read-check-write in one handler, which is
+// atomic in Node's single thread.
+// Admin token helper: the token lives on the 'musa-social-store'
+// business record, checked against ?t=.
+function adminTokenOk(req) {
+  const owner = store.getBusiness('musa-social-store');
+  return activity.activityTokenMatches(owner, String(req.query.t || ''));
+}
+
+// Numbers still free to claim, in the order they were added. No token:
+// the Connect page needs this list to offer a claim.
+app.get('/api/pool/available', (req, res) => {
+  const pool = numberPool.loadPool();
+  res.json({ available: (pool.numbers || []).filter((n) => n.status === 'available').map((n) => n.phone) });
+});
+
+// Which number this business claimed (if any), and its own number.
+app.get('/api/business/:id/pool/claim', (req, res) => {
+  const business = store.getBusiness(businessId(req));
+  res.json({ claimedPhone: business.claimedPhone || null, phone: business.phone || '' });
+});
+
+// Claim one pool number for this business. A failed claim is a 409
+// with the reason; a second claim while one is held is refused by
+// claimNumber (one number per business).
+app.post('/api/business/:id/pool/claim', (req, res) => {
+  const id = businessId(req);
+  const pool = numberPool.loadPool();
+  const business = store.getBusiness(id);
+  const result = numberPool.claimNumber(pool, business, (req.body || {}).phone);
+  if (!result.ok) return res.status(409).json({ error: result.error });
+  numberPool.savePool(pool);
+  store.saveBusiness(business);
+  res.json({ ok: true, phone: result.phone, claimedPhone: result.phone });
+});
+
+// Admin overview: every business (live link status + activity totals,
+// same live-status logic as the /status route) plus the pool as stored.
+app.get('/api/admin/overview', (req, res) => {
+  if (!adminTokenOk(req)) return res.status(404).json({ error: 'Not found' });
+  const businesses = store.listBusinesses().map((b) => {
+    const session = whatsapp.getSession(b.id);
+    const linked = whatsapp.isLiveLinked(b.id);
+    const events = activity.getActivityEvents(b.id);
+    const users = activity.summarizeActivityUsers(events, b);
+    return {
+      id: b.id,
+      name: b.name,
+      businessType: activity.activityBusinessType(b),
+      phone: b.phone || '',
+      claimedPhone: b.claimedPhone || null,
+      linked,
+      whatsappStatus: linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked')),
+      totals: activity.activityTotals(events, users),
+    };
+  });
+  res.json({ businesses, pool: numberPool.loadPool().numbers || [] });
+});
+
+// Add numbers to the pool. `numbers` is a string (one per line or
+// separated by commas) or an array of phone strings. Numbers already
+// in the pool, or already owned as some business's phone/claimedPhone,
+// are skipped, not duplicated; unusable entries are reported as
+// invalid. Nothing is invented — only the numbers given are added.
+app.post('/api/admin/pool', (req, res) => {
+  if (!adminTokenOk(req)) return res.status(404).json({ error: 'Not found' });
+  const input = (req.body || {}).numbers;
+  let rawList;
+  if (typeof input === 'string') rawList = input.split(/[\r\n,]+/).map((s) => s.trim()).filter(Boolean);
+  else if (Array.isArray(input)) rawList = input.map((v) => String(v).trim()).filter(Boolean);
+  else return res.status(400).json({ error: 'numbers is required — enter numbers one per line, separated by commas, or as an array' });
+  const inUsePhones = [];
+  for (const b of store.listBusinesses()) {
+    for (const v of [b.phone, b.claimedPhone]) {
+      const n = numberPool.normalizePoolPhone(v);
+      if (n) inUsePhones.push(n);
+    }
+  }
+  const pool = numberPool.loadPool();
+  const result = numberPool.addNumbersToPool(pool, rawList, inUsePhones);
+  numberPool.savePool(pool);
+  res.json(result);
+});
+
+// Admin release: return a claimed number to the pool. A number that is
+// linked right now is refused — disconnect it first, then release it —
+// so a live session is never pulled out from under a business.
+app.post('/api/admin/pool/release', (req, res) => {
+  if (!adminTokenOk(req)) return res.status(404).json({ error: 'Not found' });
+  const phone = numberPool.normalizePoolPhone((req.body || {}).phone);
+  const pool = numberPool.loadPool();
+  const entry = (pool.numbers || []).find((n) => n.phone === phone);
+  if (!entry || entry.status !== 'claimed' || !entry.claimedBy) return res.status(409).json({ error: 'Number is not claimed' });
+  const business = store.getBusiness(entry.claimedBy);
+  if (whatsapp.isLiveLinked(entry.claimedBy) && business.phone === phone) {
+    return res.status(400).json({ error: 'This number is linked right now — disconnect it first, then release it.' });
+  }
+  const result = numberPool.releaseNumber(pool, business, phone);
+  if (!result.ok) return res.status(409).json({ error: result.error });
+  numberPool.savePool(pool);
+  store.saveBusiness(business);
+  res.json({ ok: true, phone: result.phone });
 });
 
 app.post('/api/business/:id/disconnect', async (req, res) => {
