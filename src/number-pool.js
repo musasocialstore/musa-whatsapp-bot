@@ -148,6 +148,24 @@ function recordPoolUpload(pool, result) {
   return pool.history[pool.history.length - 1];
 }
 
+// One-time migration (2026-11-23): the pool existed before upload history
+// was tracked — a pool that already holds numbers but has no history gets
+// one seed entry for those numbers, so "numbers uploaded" is true from the
+// first dashboard load. Runs once: after the seed, history is non-empty,
+// so a second call does nothing. Never throws on a malformed pool.
+function seedPoolHistoryIfMissing(pool) {
+  pool.numbers = Array.isArray(pool.numbers) ? pool.numbers : [];
+  pool.history = Array.isArray(pool.history) ? pool.history : [];
+  if (pool.numbers.length === 0 || pool.history.length > 0) return false;
+  pool.history.push({
+    at: new Date().toISOString(),
+    added: pool.numbers.map((n) => n.phone),
+    skipped: [],
+    invalid: [],
+  });
+  return true;
+}
+
 // Total numbers ever uploaded to the pool (sum of every history entry's
 // added list) — the dashboard's "numbers uploaded" card. Releases do
 // not subtract: the number WAS uploaded, and the pool list itself shows
@@ -158,4 +176,4 @@ function totalNumbersUploaded(pool) {
   return total;
 }
 
-module.exports = { POOL_FILE, loadPool, savePool, normalizePoolPhone, addNumbersToPool, claimNumber, releaseNumber, recordPoolUpload, totalNumbersUploaded, POOL_HISTORY_MAX };
+module.exports = { POOL_FILE, loadPool, savePool, normalizePoolPhone, addNumbersToPool, claimNumber, releaseNumber, recordPoolUpload, totalNumbersUploaded, seedPoolHistoryIfMissing, POOL_HISTORY_MAX };
