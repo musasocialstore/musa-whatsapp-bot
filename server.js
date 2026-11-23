@@ -166,13 +166,16 @@ app.get('/api/business/:id/activity', (req, res) => {
   const session = whatsapp.getSession(id);
   const linked = whatsapp.isLiveLinked(id);
   const events = activity.getActivityEvents(id);
+  const users = activity.summarizeActivityUsers(events, business);
   res.json({
     business: { id: business.id, name: business.name },
+    businessType: activity.activityBusinessType(business),
+    totals: activity.activityTotals(events, users),
     linked,
     phone: business.phone || '',
     linkedAt: business.linkedAt || null,
     whatsappStatus: linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked')),
-    users: activity.summarizeActivityUsers(events, business),
+    users,
     events,
   });
 });
