@@ -985,6 +985,14 @@ app.listen(PORT, () => {
   console.log('Dashboard: http://localhost:' + PORT + '/  (businessId defaults to musa-social-store)');
   if (!process.env.GEMINI_API_KEY) console.log('Note: GEMINI_API_KEY not set — customer replies use the facts fallback and Brain Chat confirms locally from the owner\'s own words (see src/ai.js fallbackReply / localBrainConfirmation)');
   if (!process.env.RESEND_API_KEY) console.log('Note: RESEND_API_KEY not set — leads will be saved but no lead email will be sent until it is set in .env');
+  // One-time pool-history migration (2026-11-23): numbers uploaded before
+  // history tracking existed (the live pool already holds 100) get one
+  // seed history entry, so the dashboard's "numbers uploaded" card is
+  // true from the first load. Never fatal to boot.
+  try {
+    const pool = numberPool.loadPool();
+    if (numberPool.seedPoolHistoryIfMissing(pool)) numberPool.savePool(pool);
+  } catch (_) { /* history is a nice-to-have; boot must not fail */ }
   // Reconnect linked sessions from the persisted auth state, so a
   // restart / redeploy never silently kills the link (and /status never
   // has to lie about it). Runs in the background; a failed restore is
