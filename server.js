@@ -29,6 +29,7 @@ const store = require('./src/store');
 const whatsapp = require('./src/whatsapp');
 const activity = require('./src/activity');
 const numberPool = require('./src/number-pool');
+const stats = require('./src/stats');
 const leads = require('./src/leads');
 const ai = require('./src/ai');
 const linkSetup = require('./src/linkSetup');
@@ -251,7 +252,9 @@ app.post('/api/business/:id/pool/claim', (req, res) => {
 });
 
 // Admin overview: every business (live link status + activity totals,
-// same live-status logic as the /status route) plus the pool as stored.
+// same live-status logic as the /status route) plus the pool, the
+// upload history, and the dashboard totals — every number from real
+// stored data, nothing invented.
 app.get('/api/admin/overview', (req, res) => {
   if (!adminTokenOk(req)) return res.status(404).json({ error: 'Not found' });
   const businesses = store.listBusinesses().map((b) => {
@@ -259,6 +262,18 @@ app.get('/api/admin/overview', (req, res) => {
     const linked = whatsapp.isLiveLinked(b.id);
     const events = activity.getActivityEvents(b.id);
     const users = activity.summarizeActivityUsers(events, b);
+    // Campaign summary for the bulk section (stored data — survives
+    // restarts): how many campaigns, how many numbers were entered,
+    // how many people were reached.
+    const campaigns = b.campaigns || [];
+    let campaignNumbers = 0;
+    let campaignReached = 0;
+    for (const c of campaigns) {
+      campaignNumbers += (c.numbers || []).length;
+      campaignReached += typeof c.sentCount === 'number'
+        ? c.sentCount
+        : (c.numbers || []).filter((n) => n.status === 'sent').length;
+    }
     return {
       id: b.id,
       name: b.name,
@@ -268,9 +283,32 @@ app.get('/api/admin/overview', (req, res) => {
       linked,
       whatsappStatus: linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked')),
       totals: activity.activityTotals(events, users),
+      campaigns: { count: campaigns.length, numbers: campaignNumbers, reached: campaignReached },
     };
   });
-  res.json({ businesses, pool: numberPool.loadPool().numbers || [] });
+  // Dashboard totals (2026-11-23, Zaib): active = linked right now
+  // (live socket). Received / sent are the lifetime counters in
+  // stats.json (they survive restarts); numbers uploaded comes from
+  // the saved pool history; campaign reach and numbers entered come
+  // from the stored campaigns.
+  const poolData = numberPool.loadPool();
+  const saved = stats.getStats();
+  const linkedCount = businesses.filter((b) => b.linked).length;
+  const totals = {
+    totalUsers: businesses.length,
+    activeUsers: linkedCount,
+    otherUsers: businesses.length - linkedCount,
+    linked: linkedCount,
+    notLinked: businesses.length - linkedCount,
+    received: saved.incoming || 0,
+    sent: saved.replies || 0,
+    numbersUploaded: numberPool.totalNumbersUploaded(poolData),
+    campaignsUsed: businesses.filter((b) => (b.campaigns && b.campaigns.count) > 0).length,
+    campaignReach: businesses.reduce((s, b) => s + ((b.campaigns && b.campaigns.reached) || 0), 0),
+    numbersEntered: businesses.reduce((s, b) => s + ((b.campaigns && b.campaigns.numbers) || 0), 0),
+    campaignMessages: saved.campaignMessages || 0,
+  };
+  res.json({ businesses, pool: poolData.numbers || [], history: poolData.history || [], totals });
 });
 
 // Add numbers to the pool. `numbers` is a string (one per line or
@@ -294,6 +332,9 @@ app.post('/api/admin/pool', (req, res) => {
   }
   const pool = numberPool.loadPool();
   const result = numberPool.addNumbersToPool(pool, rawList, inUsePhones);
+  // Save the upload record (Zaib: "vah record bhi sev hoga") — the
+  // history lives in the pool file, so it survives a restart.
+  numberPool.recordPoolUpload(pool, result);
   numberPool.savePool(pool);
   res.json(result);
 });
@@ -770,6 +811,8 @@ async function runCampaign(businessId, campaignId) {
         await bulk.sendBulkMessage(session.sock, n.phone.replace(/\D/g, '') + '@s.whatsapp.net', bulkMedia, bulkBuffer, campaign.message);
         n.status = 'sent';
         n.error = '';
+        // Lifetime counter for the admin dashboard (saved on disk).
+        stats.inc('campaignMessages');
       } catch (e) {
         n.status = 'failed';
         n.error = String((e && e.message) || e).slice(0, 120);
