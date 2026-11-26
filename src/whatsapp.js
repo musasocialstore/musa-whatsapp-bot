@@ -7,7 +7,15 @@
 // to do pairing-code linking; the official Meta Cloud API has no pairing
 // code. WhatsApp can log such sessions out or ban numbers that spam, so
 // the bot only replies to incoming customers, never mass-messages.
-// Sessions are stored per business under data/auth/<businessId>/ .
+// MULTI-ACCOUNT (2026-11-26, Zaib): one business can link MULTIPLE
+// WhatsApp numbers. Each linked number is its own socket + its own auth
+// dir + its own status. Sessions are keyed by businessId + ':' + phone
+// (see sessionKey); the business record holds business.accounts[]
+// [{ phone, linked, linkedAt }] with accounts[0] the primary, mirrored
+// by business.phone / business.linked / business.linkedAt for backward
+// compatibility. The Brain (prompt, brainSummary, learnedQA) is per
+// business and SHARED by every linked number — reply generation never
+// takes a phone, only the business.
 'use strict';
 
 const path = require('path');
@@ -29,23 +37,27 @@ const ai = require('./ai');
 const leads = require('./leads');
 const activity = require('./activity');
 const stats = require('./stats');
+const conversations = require('./conversations');
 
-const sessions = new Map(); // businessId -> { sock, status, pairingCode }
-const histories = new Map(); // businessId:customerJid -> [{role, text}]
-const lastReplyByChat = new Map(); // businessId:customerJid -> last reply text sent
-const reconnectTimers = new Map(); // businessId -> timeout handle
-const reconnectAttempts = new Map(); // businessId -> consecutive attempts
-// In-flight pairing attempts: businessId -> { phone, startedAt }.
+const sessions = new Map(); // sessionKey(businessId, phone) -> { businessId, phone, sock, status, connected, pairingCode, pairingExpiresAt }
+const histories = new Map(); // businessId:phone:customerJid -> [{role, text}]
+const lastReplyByChat = new Map(); // businessId:phone:customerJid -> last reply text sent
+const reconnectTimers = new Map(); // sessionKey -> timeout handle
+const reconnectAttempts = new Map(); // sessionKey -> consecutive attempts
+// In-flight pairing attempts: sessionKey(businessId, phone) -> { phone, startedAt }.
 // A second request while one is running is refused WITHOUT contacting
 // WhatsApp — without this, a double-tap (or a board + direct call at the
 // same time) starts two sockets and sends TWO registrations for one user
 // action, which is exactly how a fresh number gets rate-limited on its
-// very first try.
+// very first try. Keyed per NUMBER: pairing a second number while one
+// is in flight for another number is a different attempt, not a double
+// tap, and is allowed.
 const pairingInFlight = new Map();
 
-function clearReconnect(businessId) {
-  const t = reconnectTimers.get(businessId);
-  if (t) { clearTimeout(t); reconnectTimers.delete(businessId); }
+function clearReconnect(businessId, phone) {
+  const key = sessionKey(businessId, resolveAccountPhone(businessId, phone));
+  const t = reconnectTimers.get(key);
+  if (t) { clearTimeout(t); reconnectTimers.delete(key); }
 }
 
 // After a successful pair, WhatsApp closes the socket with 515
@@ -62,22 +74,24 @@ function reconnectDelayMs(attempts) {
   return Math.min(30000, 2000 * Math.pow(2, Math.min(Math.max(attempts - 1, 0), 4)));
 }
 
-function scheduleReconnect(businessId) {
+function scheduleReconnect(businessId, phone) {
+  const clean = resolveAccountPhone(businessId, phone);
+  const key = sessionKey(businessId, clean);
   // Never reconnect while a pairing attempt is in flight for this
-  // business: the pairing socket is the only socket that may exist, and
+  // number: the pairing socket is the only socket that may exist, and
   // a reconnect started from a stale close event would create a second
   // socket competing with it (second registration attempt).
-  if (pairingInFlight.has(businessId)) return;
-  if (reconnectTimers.has(businessId)) return;
-  const attempts = (reconnectAttempts.get(businessId) || 0) + 1;
-  reconnectAttempts.set(businessId, attempts);
+  if (pairingInFlight.has(key)) return;
+  if (reconnectTimers.has(key)) return;
+  const attempts = (reconnectAttempts.get(key) || 0) + 1;
+  reconnectAttempts.set(key, attempts);
   const delayMs = reconnectDelayMs(attempts);
-  console.error(`WhatsApp socket down for ${businessId} — reconnecting in ${delayMs / 1000}s (attempt ${attempts})`);
+  console.error(`WhatsApp socket down for ${businessId} (${phone}) — reconnecting in ${delayMs / 1000}s (attempt ${attempts})`);
   const timer = setTimeout(() => {
-    reconnectTimers.delete(businessId);
-    startSocket(businessId).catch((e) => console.error('reconnect failed', e));
+    reconnectTimers.delete(key);
+    startSocket(businessId, clean).catch((e) => console.error('reconnect failed', e));
   }, delayMs);
-  reconnectTimers.set(businessId, timer);
+  reconnectTimers.set(key, timer);
 }
 
 // The socket died WITHOUT a connection.update 'close' event (2026-11-22:
@@ -85,29 +99,31 @@ function scheduleReconnect(businessId) {
 // handler ever ran and no reconnect was ever scheduled). Mark it dead
 // and start a FRESH reconnect cycle (attempts reset, so the first retry
 // comes in 2s, not after a stale backoff).
-function markSocketDead(businessId) {
-  const session = sessions.get(businessId);
+function markSocketDead(businessId, phone) {
+  const clean = resolveAccountPhone(businessId, phone);
+  const key = sessionKey(businessId, clean);
+  const session = sessions.get(key);
   if (session) {
     session.connected = false;
-    sessions.set(businessId, session);
+    sessions.set(key, session);
   }
-  reconnectAttempts.delete(businessId);
-  scheduleReconnect(businessId);
+  reconnectAttempts.delete(key);
+  scheduleReconnect(businessId, clean);
   // The close event may never fire for a silently dead socket (see
   // checkSocketLiveness) — record the death here so the activity page
   // shows WHY the number stopped answering.
-  activity.recordActivity(businessId, { type: 'disconnect', detail: 'socket silently dead (ws not open)' });
+  activity.recordActivity(businessId, { type: 'disconnect', detail: 'socket silently dead (ws not open)', phone: clean || null });
 }
 
 // Wait until the socket is live again (a reconnect's 'open'), or the
 // timeout runs out. Used to retry a customer reply after a dead socket.
-async function waitForLiveSocket(businessId, timeoutMs) {
+async function waitForLiveSocket(businessId, phone, timeoutMs) {
   const deadline = Date.now() + (timeoutMs || 25000);
   while (Date.now() < deadline) {
-    if (isLiveLinked(businessId)) return true;
+    if (isLiveLinked(businessId, phone)) return true;
     await sleep(500);
   }
-  return isLiveLinked(businessId);
+  return isLiveLinked(businessId, phone);
 }
 
 // Silent-death watchdog (2026-11-22, Zaib): the ONLY thing that used
@@ -119,13 +135,13 @@ async function waitForLiveSocket(businessId, timeoutMs) {
 // process; sessions that are gone (disconnected) are simply skipped.
 let socketWatchdog = null;
 function checkSocketLiveness() {
-  for (const [businessId, session] of sessions) {
+  for (const [key, session] of sessions) {
     if (!session || !session.sock || session.connected !== true) continue;
     let open = false;
     try { open = session.sock.ws && session.sock.ws.isOpen === true; } catch (_) { open = false; }
     if (!open) {
-      console.error(`WhatsApp socket for ${businessId} is silently dead (ws not open while connected=true) — reconnecting`);
-      markSocketDead(businessId);
+      console.error(`WhatsApp socket for ${key} is silently dead (ws not open while connected=true) — reconnecting`);
+      markSocketDead(session.businessId, session.phone);
     }
   }
 }
@@ -203,11 +219,267 @@ function wrapDecryptForSessionReset(businessId, sock) {
   sock.signalRepository.__sessionResetWrapped = true;
 }
 
-function isRegistered(businessId) {
+// --- Multi-account model (2026-11-26) ---
+// Session key format: businessId + ':' + phone digits, e.g.
+// 'musa-social-store:923106865269'. Every map in this file
+// (sessions, reconnectTimers, reconnectAttempts, pairingInFlight) is
+// keyed by it, so two numbers on one business never share a socket,
+// a timer, a backoff counter, or an in-flight guard.
+function sessionKey(businessId, phone) {
+  return String(businessId) + ':' + String(phone || '').replace(/\D/g, '');
+}
+
+// Normalize the accounts list on a business record, in place.
+// Legacy single-number businesses have no accounts[] — one entry is
+// built from business.phone / business.linked / business.linkedAt, so
+// the old behaviour (business.phone is the primary) keeps working.
+// Returns the array. Callers that mutate the business save it, as
+// they already do after any other change.
+function ensureAccounts(business) {
+  if (!business || typeof business !== 'object') return [];
+  if (!Array.isArray(business.accounts)) business.accounts = [];
+  // Legacy / claim-only records have a stored phone but no accounts
+  // yet: one entry is built from business.phone / business.linked /
+  // business.linkedAt, so the old behaviour (business.phone is the
+  // primary) keeps working. A business with no stored phone has no
+  // accounts at all.
+  if (business.accounts.length === 0 && business.phone) {
+    business.accounts.push({
+      phone: String(business.phone).replace(/\D/g, ''),
+      linked: business.linked === true,
+      linkedAt: business.linkedAt || null,
+    });
+  }
+  const seen = new Set();
+  business.accounts = business.accounts
+    .filter((a) => a && a.phone)
+    .map((a) => ({ ...a, phone: String(a.phone).replace(/\D/g, ''), linked: a.linked === true, linkedAt: a.linkedAt || null }))
+    .filter((a) => { if (!a.phone || seen.has(a.phone)) return false; seen.add(a.phone); return true; });
+  return business.accounts;
+}
+
+function accountFor(business, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  if (!clean) return null;
+  return ensureAccounts(business).find((a) => a.phone === clean) || null;
+}
+
+// The primary (first) account's phone — what business.phone mirrors.
+// Falls back to business.phone itself for a record that has no
+// accounts at all (e.g. a brand-new business that never paired).
+function primaryPhone(business) {
+  const accounts = ensureAccounts(business);
+  if (accounts.length) return accounts[0].phone;
+  return business && business.phone ? String(business.phone).replace(/\D/g, '') : '';
+}
+
+// Add an account entry for a phone, or return the existing one.
+// The FIRST account becomes the primary: business.phone is set to it
+// (and only then). A second account NEVER overwrites business.phone.
+function ensureAccount(business, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  if (!clean) return null;
+  const accounts = ensureAccounts(business);
+  let entry = accounts.find((a) => a.phone === clean);
+  if (!entry) {
+    entry = { phone: clean, linked: false, linkedAt: null };
+    accounts.push(entry);
+    if (accounts.length === 1 && !business.phone) business.phone = clean;
+  }
+  return entry;
+}
+
+// business.phone / business.linked / business.linkedAt always mirror
+// accounts[0]. A business with no accounts keeps its stored values.
+function syncPrimaryLinkFields(business) {
+  const accounts = ensureAccounts(business);
+  if (!accounts.length) return;
+  const p = accounts[0];
+  if (p.phone) business.phone = p.phone;
+  business.linked = p.linked === true;
+  business.linkedAt = p.linked === true ? (p.linkedAt || business.linkedAt || null) : null;
+}
+
+// Mark one account linked / unlinked (in memory only — the caller
+// saves the business). The legacy single-number fields mirror the
+// PRIMARY account only, so old clients reading business.phone /
+// business.linked keep seeing the primary number's state.
+function setAccountLinked(business, phone, linked) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  const entry = accountFor(business, clean) || (linked ? ensureAccount(business, clean) : null);
+  if (entry) {
+    entry.linked = linked === true;
+    entry.linkedAt = linked === true ? new Date().toISOString() : null;
+  }
+  syncPrimaryLinkFields(business);
+  return entry;
+}
+
+// Resolve which phone a call without an explicit phone means: the
+// primary account's number. Reads without creating (listBusinesses
+// never mints a record, unlike getBusiness), so a lookup for an
+// unknown business stays a miss instead of creating an empty one.
+function resolveAccountPhone(businessId, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  if (clean) return clean;
   try {
-    const creds = JSON.parse(fs.readFileSync(path.join(authDir(businessId), 'creds.json'), 'utf8'));
-    return creds.registered === true;
-  } catch (_) { return false; }
+    const b = store.listBusinesses().find((x) => x && x.id === businessId);
+    return b ? primaryPhone(b) : '';
+  } catch (_) { return ''; }
+}
+
+// One auth dir per ACCOUNT: data/auth/<businessId>/<phone>/ .
+// The old layout was one dir per business, data/auth/<businessId>/ —
+// resolveAuthDir() migrates it (see below) when the phone is the
+// primary, so an existing identity keeps working; a second account
+// never touches the first account's dir.
+function authDir(businessId, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  if (clean) return path.join(store.DATA_DIR, 'auth', String(businessId), clean);
+  return path.join(store.DATA_DIR, 'auth', String(businessId));
+}
+
+// The dir a socket for (businessId, phone) must actually use. Migrates
+// a legacy flat auth dir into the per-account dir when it belongs to
+// the primary phone — moving the FILES (renaming the dir into its own
+// subdirectory would fail). Never throws; on any failure it falls
+// back to the per-account dir so the socket can still start.
+function resolveAuthDir(businessId, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  const dir = authDir(businessId, clean);
+  try {
+    if (!clean) return dir;
+    if (fs.existsSync(path.join(dir, 'creds.json'))) return dir;
+    const legacy = authDir(businessId);
+    if (!fs.existsSync(path.join(legacy, 'creds.json'))) return dir;
+    let isPrimary = false;
+    try { isPrimary = primaryPhone(store.getBusiness(businessId)) === clean; } catch (_) {}
+    if (!isPrimary) return dir;
+    fs.mkdirSync(dir, { recursive: true });
+    for (const entry of fs.readdirSync(legacy)) {
+      const from = path.join(legacy, entry);
+      // Only top-level FILES move — a subdirectory here is another
+      // account's per-account dir (the flat dir is their parent) and
+      // must stay exactly where it is.
+      let isFile = false;
+      try { isFile = fs.statSync(from).isFile(); } catch (_) {}
+      if (!isFile) continue;
+      const to = path.join(dir, entry);
+      if (fs.existsSync(to)) continue;
+      fs.renameSync(from, to);
+    }
+    try { fs.rmdirSync(legacy); } catch (_) {}
+    console.log('Migrated legacy WhatsApp auth dir for', businessId, 'to per-account dir', clean);
+    return dir;
+  } catch (_) {
+    return dir;
+  }
+}
+
+// Wipe ONLY one account's auth dir. A primary account may also still
+// have the legacy flat dir — wipe ONLY its top-level files, never the
+// dir itself: the flat dir is the PARENT of the per-account dirs, so a
+// recursive wipe of it would destroy every other account's auth too.
+// Another account's dir is never touched.
+function wipeAccountAuthDir(businessId, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  try { fs.rmSync(authDir(businessId, clean), { recursive: true, force: true }); } catch (_) {}
+  if (clean) {
+    try {
+      if (primaryPhone(store.getBusiness(businessId)) === clean) {
+        const legacy = authDir(businessId);
+        try {
+          for (const entry of fs.readdirSync(legacy)) {
+            const p = path.join(legacy, entry);
+            try { if (fs.statSync(p).isFile()) fs.unlinkSync(p); } catch (_) {}
+          }
+          try { fs.rmdirSync(legacy); } catch (_) {} // only if now empty
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+}
+
+// Record a logout on the business record (2026-11-26): WHEN and WHY a
+// link died, plus which number and a re-link hint for the admin. The
+// admin overview surfaces it per business. Never throws — this path
+// runs inside the connection close handler and must never break it.
+// The loggedOut WIPE itself is unchanged (see attachHandlers): a
+// revoked identity is dead and wiping it is correct; this only
+// RECORDS the death. Verified case: 26 Nov 13:47, code 408 then 401 —
+// WhatsApp revoked the session; only a fresh pairing code revives it.
+function recordLogout(business, phone, code, reason) {
+  try {
+    if (!business || typeof business !== 'object') return null;
+    const entry = {
+      at: new Date().toISOString(),
+      code: typeof code === 'number' ? code : null,
+      reason: reason || 'loggedOut',
+      phone: String(phone || '').replace(/\D/g, '') || (business.phone ? String(business.phone).replace(/\D/g, '') : ''),
+      hint: 'WhatsApp revoked this session — only a fresh pairing code can link this number again. Open the Connect page, tap "Get pairing code" and enter the new code on the phone within 60 seconds.',
+    };
+    business.lastLogout = entry;
+    return entry;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Live per-account status for the board / admin overview: one entry
+// per account in business.accounts[], each with its OWN live truth.
+// `linked` is true only while that number's socket is really open —
+// never the stored flag alone (the stored flag survives restarts and
+// a dead socket). An account with no session at all reports
+// 'not-linked'. NOTE (verified 26 Nov): the stored phone and the last
+// CONNECTED number can differ (a pairing request can change the
+// stored phone without a successful connect) — this status is built
+// from the live sockets, not the stored phone, so it cannot lie that
+// way.
+function accountStatus(business, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  const entry = accountFor(business, clean);
+  const session = getSession(business && business.id, clean);
+  const linked = isLiveLinked(business && business.id, clean);
+  const liveStatus = linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked'));
+  return {
+    phone: clean,
+    linked,
+    whatsappStatus: liveStatus,
+    linkedAt: (entry && entry.linkedAt) || null,
+    pairingCode: session.pairingCode || null,
+    pairingExpiresAt: session.pairingExpiresAt || null,
+  };
+}
+
+function accountsStatus(business) {
+  return ensureAccounts(business).map((a) => accountStatus(business, a.phone));
+}
+
+// Accounts worth restoring on boot: flagged linked AND holding
+// registered creds in their own auth dir. Unregistered / unlinked
+// accounts are skipped (nothing to reconnect with).
+function restorableAccounts(business) {
+  if (!business || !business.id) return [];
+  return ensureAccounts(business).filter((a) => a && a.phone && a.linked === true && isRegistered(business.id, a.phone));
+}
+
+function isRegistered(businessId, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  try {
+    const creds = JSON.parse(fs.readFileSync(path.join(authDir(businessId, clean), 'creds.json'), 'utf8'));
+    if (creds.registered === true) return true;
+  } catch (_) {}
+  // Legacy flat layout (primary account, not yet migrated): the creds
+  // live directly under data/auth/<businessId>/ .
+  if (clean) {
+    try {
+      if (primaryPhone(store.getBusiness(businessId)) === clean) {
+        const creds = JSON.parse(fs.readFileSync(path.join(authDir(businessId), 'creds.json'), 'utf8'));
+        return creds.registered === true;
+      }
+    } catch (_) {}
+  }
+  return false;
 }
 
 // --- Pairing round 3 (2026-11-20): never show a code WhatsApp rejected ---
@@ -345,8 +617,9 @@ function pairingGapError(business, phone) {
   return err;
 }
 
-async function startSocket(businessId) {
-  const { state, saveCreds } = await useMultiFileAuthState(authDir(businessId));
+async function startSocket(businessId, phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  const { state, saveCreds } = await useMultiFileAuthState(resolveAuthDir(businessId, clean));
   const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({
     version,
@@ -369,8 +642,11 @@ async function startSocket(businessId) {
   });
   sock.ev.on('creds.update', saveCreds);
   wrapDecryptForSessionReset(businessId, sock);
-  const prev = sessions.get(businessId);
-  sessions.set(businessId, {
+  const key = sessionKey(businessId, clean);
+  const prev = sessions.get(key);
+  sessions.set(key, {
+    businessId,
+    phone: clean,
     sock,
     status: prev && prev.status === 'linked' ? 'linked' : 'connecting',
     // `connected` is the ONLY live truth: it is set ONLY by a real
@@ -382,18 +658,15 @@ async function startSocket(businessId) {
     pairingCode: prev ? prev.pairingCode : null,
     pairingExpiresAt: prev ? prev.pairingExpiresAt : null,
   });
-  attachHandlers(businessId, sock);
+  attachHandlers(businessId, clean, sock);
   startSocketWatchdog();
   return sock;
 }
 
-function authDir(businessId) {
-  return path.join(store.DATA_DIR, 'auth', businessId);
-}
-
-function getSession(businessId) {
-  const s = sessions.get(businessId);
-  if (!s) return { sock: null, status: 'not-linked', connected: false, pairingCode: null, pairingExpiresAt: null };
+function getSession(businessId, phone) {
+  const key = sessionKey(businessId, resolveAccountPhone(businessId, phone));
+  const s = sessions.get(key);
+  if (!s) return { sock: null, status: 'not-linked', connected: false, pairingCode: null, pairingExpiresAt: null, phone: resolveAccountPhone(businessId, phone) };
   // An expired code is a dead code: clear it so status can never report a
   // code the phone would reject for the wrong reason.
   if (s.status !== 'linked' && s.pairingExpiresAt && Date.parse(s.pairingExpiresAt) <= Date.now()) {
@@ -418,14 +691,18 @@ async function requestPairingCode(businessId, phoneNumber) {
   // code tap, for a new number AND the old one). A stale flag is cleared
   // here and the code is generated normally. (isLiveLinked is a hoisted
   // function declaration, defined further down this file.)
-  if (isLiveLinked(businessId)) {
-    const err = new Error('WhatsApp is already linked for this business. Disconnect first to link a different number.');
+  if (isLiveLinked(businessId, clean)) {
+    const err = new Error('WhatsApp number ' + clean + ' is already linked for this business. Disconnect that number first to link a different number.');
     err.status = 409;
     throw err;
   }
-  if (business.linked === true) {
-    business.linked = false;
-    business.linkedAt = null;
+  // A stale flag for THIS number is cleared here and the code is
+  // generated normally (same reasoning as before, per number now).
+  // Another number's flag is never touched — pairing a second number
+  // while the first is linked must work.
+  const existingAccount = accountFor(business, clean);
+  if (existingAccount && existingAccount.linked === true) {
+    setAccountLinked(business, clean, false);
     store.saveBusiness(business);
   }
   // Attempt guard: refuse BEFORE contacting WhatsApp when THIS number is
@@ -442,37 +719,44 @@ async function requestPairingCode(businessId, phoneNumber) {
   // registrations for one user action and a fresh number is rate-limited
   // on its first try. The guard is cleared in the finally below, on every
   // exit path, so it can never stick.
-  if (pairingInFlight.has(businessId)) {
+  if (pairingInFlight.has(sessionKey(businessId, clean))) {
     const err = new Error('A pairing code is already being requested — please wait for it to appear instead of requesting another one. Requesting again cancels the code and makes WhatsApp limit this number.');
     err.status = 409;
     err.code = 'PAIRING_IN_PROGRESS';
     throw err;
   }
-  pairingInFlight.set(businessId, { phone: clean, startedAt: Date.now() });
+  pairingInFlight.set(sessionKey(businessId, clean), { phone: clean, startedAt: Date.now() });
   try {
-  // Switching numbers starts from a clean identity for THAT number:
-  // the stored phone is replaced and the auth folder is wiped below, so
-  // the new number never reuses the previous number's creds. The old
+  // Register THIS number as an account of the business. The first
+  // account becomes the primary (business.phone); a second number
+  // NEVER overwrites the primary — the old code replaced
+  // business.phone here, which is exactly how the stored phone ended
+  // up differing from the last connected number (verified 26 Nov:
+  // stored 923438220191, last connected 923247353408). The old
   // number's lockout stays recorded under the OLD number only.
-  business.phone = clean;
+  ensureAccount(business, clean);
   syncLegacyPairingFields(business, clean);
   store.saveBusiness(business);
 
-  // End any stale socket from an earlier attempt so it cannot fight this
-  // one. Its connection.update listeners are removed first so its close
-  // event cannot schedule a reconnect or clear the new attempt's state.
-  clearReconnect(businessId);
-  reconnectAttempts.delete(businessId);
-  const previous = sessions.get(businessId);
+  // End any stale socket for THIS number from an earlier attempt so it
+  // cannot fight this one. Its connection.update listeners are removed
+  // first so its close event cannot schedule a reconnect or clear the
+  // new attempt's state. Another number's socket is never touched.
+  clearReconnect(businessId, clean);
+  reconnectAttempts.delete(sessionKey(businessId, clean));
+  const previous = sessions.get(sessionKey(businessId, clean));
   if (previous && previous.sock) {
     try { previous.sock.ev.removeAllListeners('connection.update'); } catch (_) {}
     try { previous.sock.end(undefined); } catch (_) {}
   }
-  sessions.delete(businessId);
+  sessions.delete(sessionKey(businessId, clean));
 
-  // Start EVERY pairing attempt from a clean identity. The business is
-  // guaranteed not-linked here (checked above), so any stored auth state
-  // is leftover from an earlier attempt and holds nothing worth keeping:
+  // Start EVERY pairing attempt from a clean identity for THIS number
+  // only — wipe ONLY this number's auth dir, never another account's
+  // (see wipeAccountAuthDir). The business is guaranteed not-linked
+  // for this number here (checked above), so any stored auth state
+  // for it is leftover from an earlier attempt and holds nothing
+  // worth keeping:
   // - an UNREGISTERED leftover makes WhatsApp kill every new connection
   //   with 428 "Connection Terminated" before any code is issued
   //   (verified live: fresh identity returns a code in ~1.2s, stale
@@ -485,10 +769,11 @@ async function requestPairingCode(businessId, phoneNumber) {
   //   "Connection Failure" — the exact red error the board showed under
   //   the phone field — and no code can ever be issued from it again.
   // The previous version only wiped UNREGISTERED leftovers, which is
-  // why the failure became permanent. Wipe unconditionally.
-  try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
+  // why the failure became permanent. Wipe unconditionally — this
+  // number's dir only.
+  wipeAccountAuthDir(businessId, clean);
 
-  const sock = await startSocket(businessId);
+  const sock = await startSocket(businessId, clean);
 
   // IMPORTANT: requestPairingCode must only be called once the socket has
   // signalled it is ready (first connection.update carrying a QR, or an
@@ -551,12 +836,13 @@ async function requestPairingCode(businessId, phoneNumber) {
   if (verdict.state !== 'registered') {
     // Tear the attempt down completely — socket ended with its listeners
     // removed, session dropped, auth wiped — so no dead code or identity
-    // survives for the board (or a later attempt) to trip over.
-    clearReconnect(businessId);
+    // survives for the board (or a later attempt) to trip over. Only
+    // this number's state is torn down.
+    clearReconnect(businessId, clean);
     try { sock.ev.removeAllListeners('connection.update'); } catch (_) {}
     try { sock.end(undefined); } catch (_) {}
-    sessions.delete(businessId);
-    try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
+    sessions.delete(sessionKey(businessId, clean));
+    wipeAccountAuthDir(businessId, clean);
     if (verdict.state === 'rejected' && (verdict.code === '429' || /rate|overlimit/i.test(verdict.text))) {
       // Lockout is recorded for THIS phone only — a different number is
       // unaffected and can still link first time.
@@ -588,52 +874,56 @@ async function requestPairingCode(businessId, phoneNumber) {
   store.saveBusiness(business);
   // Baileys returns e.g. "ABCD-EFGH". Show it grouped as the user types it.
   // Pairing codes expire after ~60 seconds — the dashboard counts this down.
-  sessions.set(businessId, { sock, status: 'waiting-pairing', pairingCode: code, pairingExpiresAt: new Date(Date.now() + 60000).toISOString() });
+  sessions.set(sessionKey(businessId, clean), { businessId, phone: clean, sock, status: 'waiting-pairing', connected: false, pairingCode: code, pairingExpiresAt: new Date(Date.now() + 60000).toISOString() });
   return code;
   } finally {
-    pairingInFlight.delete(businessId);
+    pairingInFlight.delete(sessionKey(businessId, clean));
   }
 }
 
-function attachHandlers(businessId, sock) {
+function attachHandlers(businessId, phone, sock) {
+  const clean = String(phone || '').replace(/\D/g, '');
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect } = update;
-    const session = getSession(businessId);
+    const session = getSession(businessId, clean);
     if (connection === 'open') {
-      console.log('WhatsApp connected for', businessId);
-      activity.recordActivity(businessId, { type: 'connect' });
-      reconnectAttempts.delete(businessId);
+      console.log('WhatsApp connected for', businessId, clean);
+      activity.recordActivity(businessId, { type: 'connect', phone: clean });
+      reconnectAttempts.delete(sessionKey(businessId, clean));
       session.status = 'linked';
       session.connected = true;
       session.pairingCode = null;
       session.pairingExpiresAt = null;
       const business = store.getBusiness(businessId);
-      business.linked = true;
-      business.linkedAt = new Date().toISOString();
+      setAccountLinked(business, clean, true);
       store.saveBusiness(business);
-      sessions.set(businessId, session);
+      sessions.set(sessionKey(businessId, clean), session);
     } else if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
-      console.error('WhatsApp connection closed for', businessId, 'code', code);
-      activity.recordActivity(businessId, { type: 'disconnect', code: code === undefined ? null : code });
+      console.error('WhatsApp connection closed for', businessId, clean, 'code', code);
+      // The disconnect event ALWAYS fires, including for a logout —
+      // the activity page shows WHY the number stopped answering.
+      activity.recordActivity(businessId, { type: 'disconnect', code: code === undefined ? null : code, phone: clean });
       // The socket is dead from here on, whatever the stored status was.
       session.connected = false;
       if (code === DisconnectReason.loggedOut) {
         // Logged out: this identity is dead. Clear the session AND wipe
         // the stored auth state so the next pairing attempt starts clean
         // instead of failing forever with "Connection Failure" (401).
+        // The WIPE is unchanged — a revoked identity is dead and only
+        // a fresh pairing code can revive it. What is NEW (2026-11-26)
+        // is the RECORD: lastLogout on the business says WHEN and WHY
+        // this number's link died, so the admin can see it.
         session.status = 'logged-out';
         session.pairingCode = null;
         session.pairingExpiresAt = null;
-        sessions.set(businessId, session);
+        sessions.set(sessionKey(businessId, clean), session);
         const business = store.getBusiness(businessId);
-        if (business.linked) {
-          business.linked = false;
-          business.linkedAt = null;
-          store.saveBusiness(business);
-        }
-        reconnectAttempts.delete(businessId);
-        try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
+        setAccountLinked(business, clean, false);
+        recordLogout(business, clean, code, 'WhatsApp revoked the session (logged out)');
+        try { store.saveBusiness(business); } catch (_) {}
+        reconnectAttempts.delete(sessionKey(businessId, clean));
+        wipeAccountAuthDir(businessId, clean);
         return;
       }
       session.status = session.status === 'linked' ? 'linked' : 'disconnected';
@@ -644,19 +934,19 @@ function attachHandlers(businessId, sock) {
         session.pairingCode = null;
         session.pairingExpiresAt = null;
       }
-      sessions.set(businessId, session);
+      sessions.set(sessionKey(businessId, clean), session);
       // WhatsApp closes the socket right after a successful pair (515
       // restartRequired) and expects a reconnect with the registered
       // creds to finish logging in; transient drops of a linked session
       // need the same treatment. Only a REGISTERED identity can log in
       // again — an unregistered one has nothing to reconnect with.
-      if (isRegistered(businessId)) scheduleReconnect(businessId);
+      if (isRegistered(businessId, clean)) scheduleReconnect(businessId, clean);
     }
   });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
-      try { await handleIncoming(businessId, sock, msg); } catch (e) { console.error('handleIncoming failed', e); }
+      try { await handleIncoming(businessId, clean, sock, msg); } catch (e) { console.error('handleIncoming failed', e); }
     }
   });
 
@@ -923,10 +1213,16 @@ function replyJidFor(business, fromJid) {
   return phone ? phone + '@s.whatsapp.net' : fromJid;
 }
 
-async function handleIncoming(businessId, sock, msg) {
+async function handleIncoming(businessId, phone, sock, msg) {
   if (!msg.message || msg.key.fromMe) return;
   const business = store.getBusiness(businessId);
-  if (!business.linked) return;
+  // Per-ACCOUNT guard: a message arriving on number B is answered by
+  // B's socket only when B itself is linked — another number's link
+  // state never gates it. The Brain below is the business's own
+  // (prompt / brainSummary / learnedQA), shared by every account.
+  const clean = String(phone || '').replace(/\D/g, '') || primaryPhone(business);
+  const account = accountFor(business, clean);
+  if (!account || !account.linked) return;
   const fromJid = msg.key.remoteJid;
   if (!fromJid || fromJid.endsWith('@g.us')) return; // DMs only, never group messages
   // Inbound visibility (2026-11-22, Zaib: customers message but no
@@ -956,6 +1252,11 @@ async function handleIncoming(businessId, sock, msg) {
     if (understood) text = understood;
   }
   if (!text.trim()) { return; } // nothing to answer — typing never started
+  // Persisted message store (2026-11-26, Worker B): record EVERY
+  // incoming customer message, with the account phone that received
+  // it. recordConversation never throws, but the call is wrapped too —
+  // a store failure must never break the reply path.
+  try { conversations.recordConversation(businessId, fromJid, 'in', text, clean, { name: displayName }); } catch (_) {}
   // Record the incoming message for the private activity page: sender
   // + SHORT preview only, never the full chat text.
   {
@@ -995,7 +1296,7 @@ async function handleIncoming(businessId, sock, msg) {
   const typing = await beginTypingAfterReadPause(sock, replyJid, arrivedAt);
   const stopTyping = typing.stop;
 
-  const key = `${businessId}:${fromJid}`;
+  const key = `${businessId}:${clean}:${fromJid}`;
   const history = histories.get(key) || [];
   history.push({ role: 'customer', text });
   // Design request (2026-11-22, Zaib: NO picture creation at all —
@@ -1082,10 +1383,10 @@ async function handleIncoming(businessId, sock, msg) {
     // socket is live. Text only on the retry — the media may already
     // have gone out, and a second picture would double-send it.
     console.error('Customer reply send failed, reconnecting + retrying:', (e && e.message) || e);
-    markSocketDead(businessId);
+    markSocketDead(businessId, clean);
     try {
-      const live = await waitForLiveSocket(businessId, 25000);
-      const liveSession = sessions.get(businessId);
+      const live = await waitForLiveSocket(businessId, clean, 25000);
+      const liveSession = sessions.get(sessionKey(businessId, clean));
       if (live && liveSession && liveSession.sock) {
         await sendHumanLike(liveSession.sock, replyJid, reply.text, async () => {
           const sent = await liveSession.sock.sendMessage(replyJid, { text: reply.text });
@@ -1116,6 +1417,13 @@ async function handleIncoming(businessId, sock, msg) {
   // Lifetime counter for the admin dashboard (saved on disk). Only a
   // reply that actually went out counts — a failed send stays uncounted.
   if (replySent) stats.inc('replies');
+  // Persisted message store (2026-11-26, Worker B): record the bot
+  // reply that actually went out, with the account phone that sent
+  // it. Only a sent reply is recorded — a failed send stays unrecorded,
+  // same as the counter above. Never throws, never breaks the reply.
+  if (replySent) {
+    try { conversations.recordConversation(businessId, fromJid, 'out', reply.text, clean); } catch (_) {}
+  }
 
   // Confirmation flow: when the customer has fully confirmed their
   // order, the bot says so in the team's words and the conversation
@@ -1124,15 +1432,15 @@ async function handleIncoming(businessId, sock, msg) {
   // full chat. Anything else still uses the normal lead capture below.
   if (isConfirmedOrder(text, reply.text, history)) {
     if (!TEAM_LINE_RE.test(reply.text)) {
-      try { await sendText(businessId, replyJid, teamLineFor(ai.detectLanguage(text))); } catch (e) { console.error('team line send failed:', e && e.message); }
+      try { await sendText(businessId, replyJid, teamLineFor(ai.detectLanguage(text)), clean); } catch (e) { console.error('team line send failed:', e && e.message); }
     }
     const historyText = history.map((h) => `${h.role === 'customer' ? 'Customer' : 'Bot'}: ${h.text}`).join('\n');
-    await leads.captureAndForward(business, fromJid, historyText, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid });
+    await leads.captureAndForward(business, fromJid, historyText, (bid, jid, t) => sendText(bid, jid, t, clean), { displayName, isLid });
   } else if (leads.looksLikeLead(text, business)) {
     // Lead-looking message but NO confirmation yet (2026-11-22, Zaib:
     // the alert comes only after the customer says "han theek hai") —
     // save the lead so nothing is lost, but send no alert.
-    await leads.captureAndForward(business, fromJid, text, (bid, jid, t) => sendText(bid, jid, t), { displayName, isLid, forward: false });
+    await leads.captureAndForward(business, fromJid, text, (bid, jid, t) => sendText(bid, jid, t, clean), { displayName, isLid, forward: false });
   }
 }
 
@@ -1140,70 +1448,96 @@ async function handleIncoming(businessId, sock, msg) {
 // send guards may trust. business.linked survives restarts, and
 // session.status keeps saying 'linked' after a socket dies, so neither
 // can prove the link is alive. `connected` is true only between a real
-// connection 'open' and the next 'close'.
-function isLiveLinked(businessId) {
-  const s = sessions.get(businessId);
+// connection 'open' and the next 'close'. Per ACCOUNT: pass the phone
+// to check that number; with no phone the primary account is checked.
+function isLiveLinked(businessId, phone) {
+  const key = sessionKey(businessId, resolveAccountPhone(businessId, phone));
+  const s = sessions.get(key);
   return !!(s && s.sock && s.connected === true && s.status === 'linked');
 }
 
-// On boot, reconnect every business whose stored flag says linked and
+// On boot, reconnect every account whose stored flag says linked and
 // whose auth creds are still registered — so a restart / redeploy never
-// silently kills the link and the owner never has to re-link. Businesses
-// without registered creds are skipped (nothing to reconnect with).
+// silently kills the link and the owner never has to re-link. EVERY
+// linked account is restored, not just the primary. Accounts without
+// registered creds are skipped (nothing to reconnect with).
 // A stale/invalid identity heals itself: Baileys closes it with
 // loggedOut and the handler below wipes the auth + clears the flag.
 async function restoreLinkedSessions() {
   let businesses = [];
   try { businesses = store.listBusinesses(); } catch (_) { return; }
   for (const b of businesses) {
-    if (!b || !b.id || b.linked !== true) continue;
-    if (!isRegistered(b.id)) continue;
-    try {
-      await startSocket(b.id);
-      console.log('Restored WhatsApp session for', b.id);
-    } catch (e) {
-      console.error('Could not restore WhatsApp session for', b.id, (e && e.message) || e);
+    if (!b || !b.id) continue;
+    const hadAccounts = Array.isArray(b.accounts) && b.accounts.length > 0;
+    const accounts = restorableAccounts(b);
+    // Persist a legacy migration (single-number record -> accounts[])
+    // so the next boot does not have to re-derive it.
+    if (!hadAccounts) {
+      try { store.saveBusiness(b); } catch (_) {}
+    }
+    for (const account of accounts) {
+      try {
+        await startSocket(b.id, account.phone);
+        console.log('Restored WhatsApp session for', b.id, account.phone);
+      } catch (e) {
+        console.error('Could not restore WhatsApp session for', b.id, account.phone, (e && e.message) || e);
+      }
     }
   }
 }
 
-async function sendText(businessId, jid, text) {
-  const session = getSession(businessId);
+async function sendText(businessId, jid, text, phone) {
+  const session = getSession(businessId, phone);
   // Only a fully linked session can send. A socket that is still waiting
   // for pairing accepts sendMessage() and then hangs indefinitely, which
   // froze lead confirmation — fail fast with the real reason instead.
-  if (!isLiveLinked(businessId)) {
+  // No phone means the primary account's socket.
+  if (!isLiveLinked(businessId, phone)) {
     throw new Error('WhatsApp not linked for this business');
   }
   return session.sock.sendMessage(jid, { text });
 }
 
-async function disconnect(businessId) {
+async function disconnect(businessId, phone) {
   // Clear the stored linked flag FIRST, before touching the socket:
   // the board must never keep saying "already linked" for a dead
   // session just because the socket logout below threw or there was no
   // session at all (Zaib hit this 2026-11-21: disconnected + deleted,
   // yet every Get pairing code tap still answered "already linked").
   // Every step below is best-effort and can never stop the flag from
-  // being cleared.
+  // being cleared. Per NUMBER: only the named account is disconnected
+  // (no phone = the primary) — the other accounts keep working.
+  const business = store.getBusiness(businessId);
+  const target = String(phone || '').replace(/\D/g, '') || primaryPhone(business);
   try {
-    const business = store.getBusiness(businessId);
-    business.linked = false;
-    business.linkedAt = null;
+    const entry = accountFor(business, target);
+    if (entry) {
+      entry.linked = false;
+      entry.linkedAt = null;
+    }
+    syncPrimaryLinkFields(business);
+    // No accounts at all (legacy record with a flag but no phone):
+    // clear the flag directly — there is no entry to clear it through.
+    if (!business.accounts.length && target === primaryPhone(business)) {
+      business.linked = false;
+      business.linkedAt = null;
+    }
     store.saveBusiness(business);
   } catch (_) {}
-  clearReconnect(businessId);
-  pairingInFlight.delete(businessId);
-  reconnectAttempts.delete(businessId);
-  const session = getSession(businessId);
+  clearReconnect(businessId, target);
+  pairingInFlight.delete(sessionKey(businessId, target));
+  reconnectAttempts.delete(sessionKey(businessId, target));
+  const session = getSession(businessId, target);
   if (session.sock) {
     try { session.sock.ev.removeAllListeners('connection.update'); } catch (_) {}
     try { await session.sock.logout(); } catch (_) {}
   }
-  sessions.delete(businessId);
+  sessions.delete(sessionKey(businessId, target));
   // Wipe the stored auth state too: a later link must start from a clean
   // identity, never from a logged-out one (see requestPairingCode).
-  try { fs.rmSync(authDir(businessId), { recursive: true, force: true }); } catch (_) {}
+  // ONLY this number's auth dir is wiped.
+  wipeAccountAuthDir(businessId, target);
+  return target;
 }
 
-module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, beginTypingAfterReadPause, waitForMinTyping, READ_PAUSE_MS, MIN_TYPING_MS, MAX_REPLY_WAIT_MS, receiptStatusName, replyJidFor, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers, resetBrokenSession, wrapDecryptForSessionReset, sessionIdForJid, SESSION_RESET_MIN_GAP_MS, lastSessionReset };
+module.exports = { requestPairingCode, getSession, sendText, disconnect, pairingVerdictFromFrame, handleIncoming, humanDelayMs, sendHumanLike, startTyping, beginTypingAfterReadPause, waitForMinTyping, READ_PAUSE_MS, MIN_TYPING_MS, MAX_REPLY_WAIT_MS, receiptStatusName, replyJidFor, isConfirmedOrder, teamLineFor, findAgreedPrice, isLiveLinked, restoreLinkedSessions, scheduleReconnect, markSocketDead, waitForLiveSocket, reconnectDelayMs, checkSocketLiveness, clearReconnect, sessions, reconnectAttempts, reconnectTimers, pairingInFlight, resetBrokenSession, wrapDecryptForSessionReset, sessionIdForJid, SESSION_RESET_MIN_GAP_MS, lastSessionReset, sessionKey, authDir, resolveAuthDir, wipeAccountAuthDir, ensureAccounts, accountFor, ensureAccount, primaryPhone, setAccountLinked, syncPrimaryLinkFields, resolveAccountPhone, recordLogout, accountStatus, accountsStatus, restorableAccounts, attachHandlers, isRegistered };
