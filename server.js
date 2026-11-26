@@ -29,6 +29,7 @@ const store = require('./src/store');
 const whatsapp = require('./src/whatsapp');
 const activity = require('./src/activity');
 const numberPool = require('./src/number-pool');
+const conversations = require('./src/conversations');
 const stats = require('./src/stats');
 const leads = require('./src/leads');
 const ai = require('./src/ai');
@@ -99,19 +100,16 @@ app.post('/api/business/:id/pairing-code', async (req, res) => {
     const id = businessId(req);
     const phone = normalizePhone((req.body || {}).phone);
     if (!phone || phone.length < 10 || phone.length > 15) return res.status(400).json({ error: 'Valid phone number is required, 10-15 digits, e.g. 923106865269' });
-    const existing = store.getBusiness(id);
-    // Refuse ONLY on a LIVE link. The stored flag survives restarts and
-    // a failed disconnect, so it can say "linked" while no session
-    // exists — refusing on it made re-linking impossible (Zaib hit this
-    // 2026-11-21: NOT LINKED on screen, yet "already linked" on every
-    // Get pairing code tap, for a new number AND the old one). A stale
-    // flag is cleared here and the code is generated normally.
-    if (whatsapp.isLiveLinked(id)) return res.status(409).json({ error: 'WhatsApp is already linked for this business. Disconnect first to link a different number.' });
-    if (existing.linked === true) {
-      existing.linked = false;
-      existing.linkedAt = null;
-      store.saveBusiness(existing);
-    }
+    // Refuse ONLY when THIS number is live-linked. The stored flag
+    // survives restarts and a failed disconnect, so it can say "linked"
+    // while no session exists — refusing on it made re-linking
+    // impossible (Zaib hit this 2026-11-21: NOT LINKED on screen, yet
+    // "already linked" on every Get pairing code tap, for a new number
+    // AND the old one). A stale flag for THIS number is cleared inside
+    // requestPairingCode and the code is generated normally. Another
+    // number being linked is NOT a conflict — one business can pair
+    // multiple numbers (2026-11-26).
+    if (whatsapp.isLiveLinked(id, phone)) return res.status(409).json({ error: 'WhatsApp number ' + phone + ' is already linked for this business. Disconnect that number first to link a different number.' });
     const code = await whatsapp.requestPairingCode(id, phone);
     res.json({
       phone,
@@ -156,12 +154,22 @@ app.get('/api/business/:id/status', (req, res) => {
   // live socket — linked only while a real connection is open.
   const linked = whatsapp.isLiveLinked(id);
   const liveStatus = linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked'));
+  // Multi-account (2026-11-26): linkedNumbers / accounts list EVERY
+  // linked number on this business with its own live truth — the
+  // stored phone and the last connected number can differ (verified
+  // 26 Nov), so status is built from the live sockets, not the stored
+  // phone. The top-level linked / whatsappStatus / pairingCode fields
+  // still describe the PRIMARY account, for old clients.
+  const accounts = whatsapp.accountsStatus(business);
   res.json({
     business: activity.publicBusiness(business),
     whatsappStatus: liveStatus,
     linked,
     pairingCode: session.pairingCode || null,
     pairingExpiresAt: session.pairingExpiresAt || null,
+    linkedNumbers: accounts,
+    accounts,
+    lastLogout: business.lastLogout || null,
   });
 });
 
@@ -234,12 +242,13 @@ app.get('/api/pool/available', (req, res) => {
 // Which number this business claimed (if any), and its own number.
 app.get('/api/business/:id/pool/claim', (req, res) => {
   const business = store.getBusiness(businessId(req));
-  res.json({ claimedPhone: business.claimedPhone || null, phone: business.phone || '' });
+  res.json({ claimedPhone: business.claimedPhone || null, claimedPhones: business.claimedPhones || (business.claimedPhone ? [business.claimedPhone] : []), phone: business.phone || '' });
 });
 
 // Claim one pool number for this business. A failed claim is a 409
-// with the reason; a second claim while one is held is refused by
-// claimNumber (one number per business).
+// with the reason; a second claim while one is held is ALLOWED now —
+// one number per ACCOUNT, not per business (2026-11-26) — but a number
+// claimed by another business stays unavailable (exclusive take).
 app.post('/api/business/:id/pool/claim', (req, res) => {
   const id = businessId(req);
   const pool = numberPool.loadPool();
@@ -248,7 +257,33 @@ app.post('/api/business/:id/pool/claim', (req, res) => {
   if (!result.ok) return res.status(409).json({ error: result.error });
   numberPool.savePool(pool);
   store.saveBusiness(business);
-  res.json({ ok: true, phone: result.phone, claimedPhone: result.phone });
+  res.json({ ok: true, phone: result.phone, claimedPhone: result.phone, claimedPhones: business.claimedPhones || [result.phone] });
+});
+
+// User release (2026-11-26, Zaib): a business releases ONE of its own
+// claimed numbers back to the pool, from the Connect page. Only the
+// business that claimed the number can release it; a number that is
+// live-linked right now is refused with a 409 — disconnect it first,
+// then release it (same isLiveLinked guard as the admin release, per
+// number). Disconnecting does NOT auto-release: the claim stays until
+// the user taps Release here. After a release the number is free for
+// any business to claim again.
+app.post('/api/business/:id/pool/claim/release', (req, res) => {
+  const id = businessId(req);
+  const phone = numberPool.normalizePoolPhone((req.body || {}).phone);
+  const pool = numberPool.loadPool();
+  const business = store.getBusiness(id);
+  const entry = (pool.numbers || []).find((n) => n.phone === phone);
+  if (!entry || entry.status !== 'claimed') return res.status(409).json({ error: 'Number is not claimed' });
+  if (entry.claimedBy !== id) return res.status(409).json({ error: 'This number was claimed by another business' });
+  if (whatsapp.isLiveLinked(id, phone)) {
+    return res.status(409).json({ error: 'This number is linked right now — disconnect it first, then release it.' });
+  }
+  const result = numberPool.releaseNumber(pool, business, phone);
+  if (!result.ok) return res.status(409).json({ error: result.error });
+  numberPool.savePool(pool);
+  store.saveBusiness(business);
+  res.json({ ok: true, phone: result.phone, claimedPhones: business.claimedPhones || [] });
 });
 
 // Admin overview: every business (live link status + activity totals,
@@ -274,14 +309,22 @@ app.get('/api/admin/overview', (req, res) => {
         ? c.sentCount
         : (c.numbers || []).filter((n) => n.status === 'sent').length;
     }
+    // Multi-account (2026-11-26): every linked number with its own
+    // live truth, plus the last logout (WHEN + WHY + WHICH number +
+    // re-link hint) so the admin sees a dead link at a glance.
+    const accounts = whatsapp.accountsStatus(b);
     return {
       id: b.id,
       name: b.name,
       businessType: activity.activityBusinessType(b),
       phone: b.phone || '',
       claimedPhone: b.claimedPhone || null,
+      claimedPhones: b.claimedPhones || (b.claimedPhone ? [b.claimedPhone] : []),
       linked,
       whatsappStatus: linked ? 'linked' : (session.status === 'linked' ? 'disconnected' : (session.status || 'not-linked')),
+      accounts,
+      linkedNumbers: accounts,
+      lastLogout: b.lastLogout || null,
       totals: activity.activityTotals(events, users),
       campaigns: { count: campaigns.length, numbers: campaignNumbers, reached: campaignReached },
     };
@@ -311,6 +354,29 @@ app.get('/api/admin/overview', (req, res) => {
   res.json({ businesses, pool: poolData.numbers || [], history: poolData.history || [], totals });
 });
 
+// --- 8b. Bot chats (2026-11-26, Worker B): the persisted message
+// store behind the SAME private token gate as /api/admin/overview
+// (adminTokenOk — missing/wrong token gets a plain 404, never a hint
+// the data exists). The chat LIST carries only an 80-char preview per
+// chat; full chat text is returned ONLY by the thread endpoint below.
+// These are the BOT's customer chats for that business only — the bot
+// never receives the user's personal WhatsApp chats, so those are not
+// and cannot be shown here.
+app.get('/api/admin/business/:id/conversations', (req, res) => {
+  if (!adminTokenOk(req)) return res.status(404).json({ error: 'Not found' });
+  const id = businessId(req);
+  res.json({ businessId: id, chats: conversations.listConversations(id) });
+});
+
+app.get('/api/admin/business/:id/conversations/:jid', (req, res) => {
+  if (!adminTokenOk(req)) return res.status(404).json({ error: 'Not found' });
+  const id = businessId(req);
+  const jid = decodeURIComponent(req.params.jid);
+  const thread = conversations.getConversationThread(id, jid);
+  if (!thread) return res.status(404).json({ error: 'No chats with this customer yet' });
+  res.json({ businessId: id, ...thread });
+});
+
 // Add numbers to the pool. `numbers` is a string (one per line or
 // separated by commas) or an array of phone strings. Numbers already
 // in the pool, or already owned as some business's phone/claimedPhone,
@@ -325,7 +391,12 @@ app.post('/api/admin/pool', (req, res) => {
   else return res.status(400).json({ error: 'numbers is required — enter numbers one per line, separated by commas, or as an array' });
   const inUsePhones = [];
   for (const b of store.listBusinesses()) {
-    for (const v of [b.phone, b.claimedPhone]) {
+    // Every number a business holds counts as in use — its primary
+    // phone, every claimed pool number, and every linked account
+    // number — so a number taken by one user can never be re-added to
+    // the pool and claimed by another user (exclusive take, 2026-11-26).
+    const held = [b.phone, b.claimedPhone, ...(b.claimedPhones || []), ...((b.accounts || []).map((a) => a && a.phone))];
+    for (const v of held) {
       const n = numberPool.normalizePoolPhone(v);
       if (n) inUsePhones.push(n);
     }
@@ -349,7 +420,11 @@ app.post('/api/admin/pool/release', (req, res) => {
   const entry = (pool.numbers || []).find((n) => n.phone === phone);
   if (!entry || entry.status !== 'claimed' || !entry.claimedBy) return res.status(409).json({ error: 'Number is not claimed' });
   const business = store.getBusiness(entry.claimedBy);
-  if (whatsapp.isLiveLinked(entry.claimedBy) && business.phone === phone) {
+  // Per-number live check (2026-11-26): refuse when THIS number is
+  // live-linked on any of the business's accounts — the old check
+  // compared business.phone, which is only the primary number, so a
+  // live second account could have been released from under it.
+  if (whatsapp.isLiveLinked(entry.claimedBy, phone)) {
     return res.status(400).json({ error: 'This number is linked right now — disconnect it first, then release it.' });
   }
   const result = numberPool.releaseNumber(pool, business, phone);
@@ -364,8 +439,16 @@ app.post('/api/business/:id/disconnect', async (req, res) => {
   // succeeds from the board's point of view — even if the socket logout
   // throws or there was no session at all. A failed disconnect must
   // never leave the flag saying "linked" for a dead session.
-  try { await whatsapp.disconnect(businessId(req)); } catch (e) { console.error('Disconnect error (flag already cleared):', (e && e.message) || e); }
-  res.json({ ok: true });
+  // Per NUMBER (2026-11-26): { phone } disconnects just that number;
+  // no phone disconnects the primary. Other accounts keep working.
+  const phone = normalizePhone((req.body || {}).phone || '');
+  try {
+    const disconnected = await whatsapp.disconnect(businessId(req), phone || undefined);
+    res.json({ ok: true, phone: disconnected || phone || null });
+  } catch (e) {
+    console.error('Disconnect error (flag already cleared):', (e && e.message) || e);
+    res.json({ ok: true, phone: phone || null });
+  }
 });
 
 // --- 2 + 4. Business settings: prompt, name, lead email, lead WhatsApp ---
