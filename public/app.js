@@ -10,6 +10,21 @@ const has = (id) => !!$(id);
 let statusTimer = null;
 let poolTimer = null;
 let poolClaimed = null; // number this business claimed from the admin pool, if any
+let phoneFilledOnce = false; // the claimed number fills the phone input ONCE, on first load only
+
+// Fill the phone input from a claimed number — ONCE, on first load,
+// and only when the input is empty and not focused. The 10s refresh
+// must NEVER overwrite what the user typed (2026-11-26 bug: loadPool
+// wrote the claimed number into the input on every refresh, so a
+// number the user deleted and re-typed was erased again within 10s).
+// The flag is set on the first attempt even when the input is busy,
+// so a later refresh can never come back and overwrite typing.
+function fillPhoneOnce(phone) {
+  if (phoneFilledOnce || !has('phone') || !phone) return;
+  phoneFilledOnce = true;
+  const ph = $('phone');
+  if (ph.value.trim() === '' && document.activeElement !== ph) ph.value = phone;
+}
 let countdownTimer = null;
 let countdownEndsAt = 0;
 let loadedOnce = false;
@@ -154,11 +169,15 @@ async function getCode() {
   finally { btn.disabled = false; btn.textContent = 'Get pairing code'; }
 }
 
-// --- Claim a number from the admin pool (Connect page only) ---
+// --- Claim a number from the admin pool (Bulk page only) ---
 // Claiming is NOT linking: it only reserves the number for this
-// business. The user still links it with "Get pairing code" below.
-// One number per business — once claimed, the Claim buttons are
-// disabled and the claimed number is filled into the phone input.
+// business. The user still links it on the Connect page with
+// "Get pairing code". One number per ACCOUNT, not per business — a
+// business holding one claimed number CAN claim another for a second
+// account, so only numbers THIS business already holds are disabled.
+// Claiming never fills the phone input (there is none on this page);
+// the Connect page fills it once on first load, or on tap of
+// "Use this number".
 async function loadPool() {
   if (!has('poolList')) return;
   const id = businessId();
@@ -171,20 +190,19 @@ async function loadPool() {
   try {
     const avail = await apiJson('/api/pool/available');
     const list = Array.isArray(avail) ? avail : (avail.numbers || avail.available || avail.pool || []);
-    // Has this business already claimed a number?
-    let claimedPhone = null;
+    // Numbers this business already claimed (it may hold several).
+    let claimedPhones = [];
     try {
       const c = await apiJson(api('/pool/claim'));
-      claimedPhone = c.claimedPhone || c.phone || c.claimed || null;
-      if (claimedPhone && typeof claimedPhone === 'object') claimedPhone = claimedPhone.phone || null;
+      claimedPhones = Array.isArray(c.claimedPhones) ? c.claimedPhones : (c.claimedPhone ? [c.claimedPhone] : []);
+      if (claimedPhones.length === 1 && typeof claimedPhones[0] === 'object') claimedPhones = [claimedPhones[0].phone || null].filter(Boolean);
     } catch (e) { /* no claim yet — the pool stays claimable */ }
-    poolClaimed = claimedPhone || null;
+    poolClaimed = claimedPhones[0] || null;
     const note = $('poolNote');
-    if (claimedPhone) {
-      if (note) note.textContent = 'You claimed ' + claimedPhone + ' — now link it with a pairing code below.';
-      if (has('phone')) $('phone').value = claimedPhone;
-    } else if (note) {
-      note.textContent = '';
+    if (note) {
+      note.textContent = claimedPhones.length
+        ? 'You claimed ' + claimedPhones.join(', ') + ' — link ' + (claimedPhones.length > 1 ? 'them' : 'it') + ' on the Connect page.'
+        : '';
     }
     if (!list.length) {
       el.innerHTML = '<p class="muted empty-note">No numbers available right now — check back later.</p>';
@@ -193,9 +211,9 @@ async function loadPool() {
     el.innerHTML = list.map((n) => {
       const phone = typeof n === 'string' ? n : (n.phone || '');
       if (!phone) return '';
-      const dis = claimedPhone ? ' disabled' : '';
+      const dis = claimedPhones.includes(phone) ? ' disabled' : '';
       return '<div class="pool-row"><b>' + esc(phone) + '</b>' +
-        '<button class="small" type="button" onclick="claimPoolNumber(\'' + esc(phone) + '\')"' + dis + '>Claim</button></div>';
+        '<button class="small" type="button" onclick="claimPoolNumber(\'' + esc(phone) + '\')"' + dis + '>' + (claimedPhones.includes(phone) ? 'Claimed by you' : 'Claim') + '</button></div>';
     }).join('');
   } catch (e) { /* pool could not be loaded — list stays as it was, no toast spam */ }
 }
@@ -203,14 +221,78 @@ async function loadPool() {
 async function claimPoolNumber(phone) {
   if (!has('poolList')) return;
   try {
-    const d = await apiJson(api('/pool/claim'), {
+    await apiJson(api('/pool/claim'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone }),
     });
-    const claimed = (d && (d.claimedPhone || d.phone)) || phone;
-    toast('Number claimed — now link it with a pairing code.');
-    if (has('phone')) $('phone').value = claimed;
+    toast('Number claimed — now link it on the Connect page.');
     loadPool();
+  } catch (e) { toast(e.message); }
+}
+
+// --- Claimed numbers on the Connect page (list + Use + Release) ---
+// The Connect page shows every number this business claimed, each
+// with "Use this number" (fills the phone input ON TAP ONLY — never
+// automatically) and "Release" (returns just that number to the pool).
+// This refreshes every 10s like the pool list, but it NEVER touches
+// the phone input value — the fill-once guard in fillPhoneOnce owns
+// that, once, on first load.
+async function loadClaims() {
+  if (!has('claimList')) return;
+  const id = businessId();
+  const el = $('claimList');
+  if (!id) {
+    poolClaimed = null;
+    el.innerHTML = '<p class="muted empty-note">Enter your Business ID above to see your claimed numbers.</p>';
+    return;
+  }
+  try {
+    const c = await apiJson(api('/pool/claim'));
+    const claimedPhones = Array.isArray(c.claimedPhones) ? c.claimedPhones : (c.claimedPhone ? [c.claimedPhone] : []);
+    poolClaimed = claimedPhones[0] || null;
+    // First load only, empty + unfocused input only — never on refresh.
+    if (poolClaimed) fillPhoneOnce(poolClaimed);
+    if (!claimedPhones.length) {
+      el.innerHTML = '<p class="muted empty-note">No claimed numbers yet — get one on the <a href="/bulk.html">Bulk Messages</a> page.</p>';
+      return;
+    }
+    el.innerHTML = claimedPhones.map((phone) => {
+      if (!phone) return '';
+      return '<div class="pool-row"><b>' + esc(phone) + '</b>' +
+        '<button class="small" type="button" onclick="useClaimedNumber(\'' + esc(phone) + '\')">Use this number</button>' +
+        '<button class="small danger" type="button" onclick="releasePoolNumber(\'' + esc(phone) + '\')">Release</button></div>';
+    }).join('');
+  } catch (e) { /* claims could not be loaded — list stays as it was, no toast spam */ }
+}
+
+// "Use this number": the ONLY tap that fills the phone input from a
+// claim. Filling the input fires no input event, so clear a limit note
+// left over from a different number by hand.
+function useClaimedNumber(phone) {
+  if (!has('phone') || !phone) return;
+  $('phone').value = phone;
+  const n = $('pairingLimitNote');
+  if (n && !n.hidden && n.dataset.phone && n.dataset.phone !== phone) hideLimitNote();
+  $('phone').focus();
+  toast('Number filled — tap "Get pairing code" to link it.');
+}
+
+// Release ONE of this business's own claimed numbers. The server
+// refuses a number claimed by another business, and a number that is
+// live-linked right now (disconnect it first, then release it).
+// Disconnecting never auto-releases — the claim stays until the user
+// taps Release here. After a release the phone input is left exactly
+// as the user left it: nothing refills the old number.
+async function releasePoolNumber(phone) {
+  if (!has('claimList')) return;
+  if (!confirm('Release ' + phone + ' back to the pool? You can claim a number again afterwards.')) return;
+  try {
+    await apiJson(api('/pool/claim/release'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    });
+    toast('Number released — it is back in the pool.');
+    loadClaims();
   } catch (e) { toast(e.message); }
 }
 
@@ -233,7 +315,30 @@ async function refreshStatus() {
         ? `WhatsApp is linked${d.business.linkedAt ? ' — ' + new Date(d.business.linkedAt).toLocaleString() : ''}.`
         : 'WhatsApp is not linked yet.';
     }
-    if (has('disconnectBtn')) $('disconnectBtn').style.display = linked ? '' : 'none';
+    // --- Linked numbers list (Connect page): EVERY linked account,
+    // each with its own live status and its own Disconnect button.
+    // Rendered on every status refresh — it never touches the phone
+    // input, only the list.
+    if (has('linkedList')) {
+      const list = Array.isArray(d.linkedNumbers) ? d.linkedNumbers : (Array.isArray(d.accounts) ? d.accounts : []);
+      const el = $('linkedList');
+      if (!list.length) {
+        el.innerHTML = '<p class="muted empty-note">No numbers linked yet — link one below.</p>';
+      } else {
+        el.innerHTML = list.map((a) => {
+          const phone = (a && a.phone) || '';
+          if (!phone) return '';
+          const isLinked = a.linked === true;
+          const status = isLinked ? 'LINKED'
+            : (a.whatsappStatus === 'waiting-pairing' ? 'WAITING'
+            : String(a.whatsappStatus || 'not-linked').toUpperCase());
+          return '<div class="pool-row"><b>' + esc(phone) + '</b>' +
+            '<span class="badge ' + (isLinked ? 'linked' : 'not-linked') + '">' + esc(status) + '</span>' +
+            (isLinked ? '<button class="small danger" type="button" onclick="disconnectNumber(\'' + esc(phone) + '\')">Disconnect</button>' : '') +
+            '</div>';
+        }).join('');
+      }
+    }
     if (linked) stopCountdown();
     // --- Home stats + setup steps (only when those ids exist; every refresh) ---
     // Stats are live: leads count, media count, prompt Set / Not set. A setup
@@ -254,13 +359,14 @@ async function refreshStatus() {
       }
     }
     // Fill the form from saved settings ONLY on first load — never overwrite
-    // what the user is typing during auto-refresh.
+    // what the user is typing during auto-refresh. The phone goes
+    // through fillPhoneOnce: once, empty + unfocused input only.
     if (!loadedOnce) {
       loadedOnce = true;
       if (has('name') && d.business.name) $('name').value = d.business.name;
       // A claimed pool number wins over the saved phone — never
       // overwrite it with an older saved number on first load.
-      if (has('phone') && d.business.phone && !poolClaimed) $('phone').value = d.business.phone;
+      if (has('phone') && d.business.phone && !poolClaimed) fillPhoneOnce(d.business.phone);
       if (has('prompt') && d.business.prompt) { $('prompt').value = d.business.prompt; updatePromptCount(); if (has('savedPrompt')) { $('savedPrompt').textContent = d.business.prompt; $('savedPromptWrap').style.display = ''; } }
       if (has('leadEmail') && d.business.leadEmail) $('leadEmail').value = d.business.leadEmail;
       if (has('leadWhatsapp') && d.business.leadWhatsapp) $('leadWhatsapp').value = d.business.leadWhatsapp;
@@ -270,12 +376,16 @@ async function refreshStatus() {
   } catch (e) { if (!loadedOnce) toast('Status could not be loaded: ' + e.message); }
 }
 
-async function disconnect() {
-  if (!confirm('Disconnect WhatsApp? The bot will stop replying to customers.')) return;
+async function disconnectNumber(phone) {
+  if (!phone) return;
+  if (!confirm('Disconnect ' + phone + '? The bot will stop replying from this number. Other linked numbers keep working.')) return;
   try {
-    await apiJson(api('/disconnect'), { method: 'POST' });
+    await apiJson(api('/disconnect'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
     stopCountdown(); if (has('pairingCode')) $('pairingCode').textContent = '— — — —';
-    toast('WhatsApp disconnected.'); refreshStatus();
+    toast('Number disconnected.');
+    // The claim is NOT auto-released on disconnect — the user releases
+    // it explicitly with the Release button next to the claim.
+    refreshStatus(); loadClaims();
   } catch (e) { toast('Disconnect failed: ' + e.message); }
 }
 
@@ -452,10 +562,13 @@ function startAutoRefresh() {
   if (statusTimer) clearInterval(statusTimer);
   // Live status: every 15s, but only when a Business ID is entered.
   statusTimer = setInterval(() => { if (businessId()) refreshStatus(); }, 15000);
-  // Pool list (Connect page only): every 10s, alongside the status timer.
+  // Pool list (Bulk page) / claimed list (Connect page): every 10s,
+  // alongside the status timer. The refresh re-renders the LIST only —
+  // it must never touch the phone input value after the first fill.
   if (poolTimer) clearInterval(poolTimer);
   poolTimer = null;
   if (has('poolList')) poolTimer = setInterval(() => { loadPool(); }, 10000);
+  else if (has('claimList')) poolTimer = setInterval(() => { loadClaims(); }, 10000);
 }
 
 // New visitor, no Business ID yet: explain that the board is empty
@@ -477,7 +590,9 @@ function showNewUserHint() {
     const id = 'biz-' + Math.random().toString(36).slice(2, 10);
     setBusinessId(id);
     loadedOnce = false;
+    phoneFilledOnce = false;
     refreshStatus();
+    loadClaims();
     toast('Your Business ID is ' + id + ' — it is saved on this phone.');
   });
   div.appendChild(btn);
@@ -514,7 +629,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const bid = $('businessId');
   if (bid) {
     bid.addEventListener('input', () => { const v = bid.value.trim(); if (v) localStorage.setItem('musa-business-id', v); });
-    bid.addEventListener('change', () => { loadedOnce = false; refreshStatus(); });
+    // A different Business ID is a fresh first load: its claimed
+    // number may fill the phone input once, like a page load.
+    bid.addEventListener('change', () => { loadedOnce = false; phoneFilledOnce = false; refreshStatus(); loadClaims(); });
   }
   // Typing a different phone clears that number's limit note instantly.
   const ph = $('phone');
@@ -529,6 +646,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (businessId()) refreshStatus();
   if (has('poolList')) loadPool();
+  if (has('claimList')) loadClaims();
   if (has('mediaList')) loadMedia();
   if (has('leads')) loadLeads();
   startAutoRefresh();

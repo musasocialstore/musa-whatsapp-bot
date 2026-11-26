@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b3b37">
 <title>Musa WhatsApp Bot Platform — Admin Panel</title>
-<link rel="stylesheet" href="/style.css?v=20261123">
+<link rel="stylesheet" href="/style.css?v=20261126">
 <style>
 /* Admin Panel page only. Same white + dark-blue 3D language as the
    board (style.css) — navy #0a2a6b / navy-deep #071d4d on white, no
@@ -57,6 +57,30 @@
 .section-note { margin: 0 0 10px; }
 .link-like { background: none; border: 0; padding: 0; margin: 0; color: var(--navy); font: inherit; font-weight: 700; cursor: pointer; box-shadow: none; text-decoration: underline; }
 .link-like:hover { filter: none; }
+/* Logout note (2026-11-26): WHEN + WHY a link died, from the overview's
+   lastLogout — surfaced, never recomputed. */
+.logout-note { display: block; color: #8a4b00; font-size: 13.5px; line-height: 1.5; margin-top: 2px; word-break: break-word; }
+.logout-note b { color: #8a4b00; }
+/* Bot chats (2026-11-26): WhatsApp-style conversation view for ONE
+   business's BOT chats only — never the user's personal WhatsApp. */
+.chat-layout { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 720px) { .chat-layout { grid-template-columns: 300px 1fr; } }
+.chat-list { border: 1px solid var(--border); border-radius: 16px; background: #ffffff; overflow: hidden; min-width: 0; }
+.chat-list-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border-soft); padding: 12px 14px; cursor: pointer; box-shadow: none; font: inherit; }
+.chat-list-item:last-child { border-bottom: 0; }
+.chat-list-item:hover { background: var(--navy-tint); filter: none; }
+.chat-list-item.active { background: var(--navy-tint); }
+.chat-list-item b { display: block; font-size: 15px; line-height: 1.35; word-break: break-word; color: var(--navy-deep); }
+.chat-list-item .chat-preview { display: block; color: var(--muted); font-size: 13.5px; line-height: 1.45; margin-top: 2px; word-break: break-word; }
+.chat-list-item .chat-meta { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.chat-thread { border: 1px solid var(--border); border-radius: 16px; background: #f4f6fb; padding: 14px; min-width: 0; min-height: 240px; }
+.chat-thread-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.chat-thread-head b { flex: 1; font-size: 15.5px; word-break: break-word; }
+.chat-bubble { max-width: 78%; padding: 9px 12px; border-radius: 14px; margin: 0 0 8px; font-size: 14.5px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+.chat-bubble.in { background: #ffffff; border: 1px solid var(--border); border-top-left-radius: 4px; margin-right: auto; }
+.chat-bubble.out { background: var(--navy); color: #ffffff; border-top-right-radius: 4px; margin-left: auto; }
+.chat-bubble .chat-time { display: block; font-size: 11.5px; margin-top: 3px; opacity: .75; }
+.chat-bubble.in .chat-time { color: var(--muted); opacity: 1; }
 </style>
 </head>
 <body>
@@ -138,6 +162,19 @@
           </div>
           <div id="otherUserList"><p class="empty-note">No other users.</p></div>
         </div>
+      </div>
+    </section>
+
+    <section class="card" id="botChatsSection" hidden>
+      <div class="card-head">
+        <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
+        <h2>Bot chats</h2>
+        <button class="small secondary" type="button" onclick="closeBotChats()">Close</button>
+      </div>
+      <p class="muted section-note" id="botChatsSubtitle">These are this business's bot chats — messages customers sent to the bot and the replies the bot sent back. This is not the user's personal WhatsApp: the bot never receives personal chats, so those are not shown here.</p>
+      <div class="chat-layout">
+        <div class="chat-list" id="botChatList"><p class="empty-note" style="padding:14px">No chats yet.</p></div>
+        <div class="chat-thread" id="botChatThread"><p class="empty-note">Select a chat to see the conversation.</p></div>
       </div>
     </section>
 
@@ -235,6 +272,23 @@
     return '<span class="badge not-linked">Not linked</span>';
   }
 
+  // Linked means at least one account is linked — from the accounts /
+  // linkedNumbers Worker C built (live per-account truth), never the
+  // primary-only flag alone: a business whose second number is linked
+  // while the primary is not still has a linked WhatsApp.
+  function isLinkedBusiness(b) {
+    var list = b.accounts || b.linkedNumbers || [];
+    if (Array.isArray(list) && list.length) return list.some(function (a) { return a && a.linked === true; });
+    return b.linked === true;
+  }
+
+  function logoutNote(b) {
+    var lo = b.lastLogout;
+    if (!lo || !lo.at) return '';
+    var reason = lo.reason || 'WhatsApp revoked the session';
+    return '<span class="logout-note"><b>Logged out ' + esc(fmtTime(lo.at)) + '</b> — ' + esc(reason) + '. Re-link with a fresh pairing code.</span>';
+  }
+
   function userRow(b) {
     var t = b.totals || {};
     var meta = esc(b.id || '');
@@ -242,12 +296,18 @@
     if (b.whatsappStatus) meta += ' · ' + esc(b.whatsappStatus);
     var phoneLine = 'Phone: ' + (b.phone || '—');
     if (b.claimedPhone) phoneLine += ' · Claimed: ' + b.claimedPhone;
+    var linkedLine = isLinkedBusiness(b) ? 'WhatsApp linked' : 'WhatsApp not linked';
+    var viewBtn = isLinkedBusiness(b)
+      ? ' <button class="small" type="button" onclick="openBotChats(\'' + esc(b.id) + '\', \'' + esc(b.name || b.id || '') + '\')">View WhatsApp</button>'
+      : '';
     return '<div class="act-row"><span class="act-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>' +
       '<div class="act-body"><b>' + esc(b.name || b.id || '') + '</b>' +
       '<span class="act-sub">' + meta + '</span>' +
       '<span class="act-sub">' + esc(phoneLine) + '</span>' +
+      '<span class="act-sub">' + esc(linkedLine) + '</span>' +
+      logoutNote(b) +
       '<span class="act-sub">' + esc(t.users || 0) + ' users · ' + esc(t.incoming || 0) + ' messages in · ' + esc(t.replies || 0) + ' replies out</span></div>' +
-      linkBadge(b) + '</div>';
+      linkBadge(b) + viewBtn + '</div>';
   }
 
   function render(data) {
@@ -323,6 +383,92 @@
         '<button class="small" type="button" onclick="openBulk(\'' + esc(b.id) + '\')">Open bulk</button></div>';
     }).join('') : '<p class="empty-note">No businesses yet.</p>';
   }
+
+  // --- Bot chats (2026-11-26): the bot's customer chats for ONE
+  // business, behind the same admin token. Chat list first, then the
+  // full thread for the chat tapped. No dummy data — empty states when
+  // the bot has no chats yet for this business.
+  var botChatsBusinessId = '';
+  var botChatsBusinessName = '';
+
+  function chatDisplayName(c) {
+    if (c.name) return c.name;
+    if (c.phone) return c.phone;
+    return (c.jid || '').split('@')[0];
+  }
+
+  window.openBotChats = async function (id, name) {
+    if (!token) { showPrivate(); return; }
+    botChatsBusinessId = id;
+    botChatsBusinessName = name || id;
+    var section = document.getElementById('botChatsSection');
+    if (section) section.hidden = false;
+    document.getElementById('botChatsSubtitle').textContent =
+      'Bot chats for ' + botChatsBusinessName + ' — messages customers sent to the bot and the replies the bot sent back. This is not the user\'s personal WhatsApp: the bot never receives personal chats, so those are not shown here.';
+    document.getElementById('botChatThread').innerHTML = '<p class="empty-note">Select a chat to see the conversation.</p>';
+    document.getElementById('botChatList').innerHTML = '<p class="empty-note" style="padding:14px">Loading chats…</p>';
+    if (section && section.scrollIntoView) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    try {
+      var res = await fetch('/api/admin/business/' + encodeURIComponent(id) + '/conversations?t=' + encodeURIComponent(token));
+      if (!res.ok) throw new Error('Request failed: ' + res.status);
+      var d = await res.json();
+      var chats = d.chats || [];
+      if (!chats.length) {
+        document.getElementById('botChatList').innerHTML = '<p class="empty-note" style="padding:14px">No chats yet.</p>';
+        return;
+      }
+      document.getElementById('botChatList').innerHTML = chats.map(function (c) {
+        return '<button class="chat-list-item" type="button" data-jid="' + esc(c.jid) + '" onclick="openBotThread(\'' + esc(c.jid) + '\')">' +
+          '<b>' + esc(chatDisplayName(c)) + '</b>' +
+          '<span class="chat-preview">' + esc(c.lastMessage || '') + '</span>' +
+          '<span class="chat-meta">' + esc(c.counts ? c.counts.total : 0) + ' messages · ' + esc(fmtTime(c.lastAt) || '') + '</span></button>';
+      }).join('');
+    } catch (e) {
+      document.getElementById('botChatList').innerHTML = '<p class="empty-note" style="padding:14px">Could not load chats — try again.</p>';
+    }
+  };
+
+  window.openBotThread = async function (jid) {
+    if (!token || !botChatsBusinessId) { showPrivate(); return; }
+    var items = document.querySelectorAll('.chat-list-item');
+    for (var i = 0; i < items.length; i++) items[i].classList.toggle('active', items[i].getAttribute('data-jid') === jid);
+    var threadEl = document.getElementById('botChatThread');
+    threadEl.innerHTML = '<p class="empty-note">Loading conversation…</p>';
+    try {
+      var res = await fetch('/api/admin/business/' + encodeURIComponent(botChatsBusinessId) + '/conversations/' + encodeURIComponent(jid) + '?t=' + encodeURIComponent(token));
+      if (!res.ok) throw new Error('Request failed: ' + res.status);
+      var d = await res.json();
+      var msgs = d.messages || [];
+      var head = '<div class="chat-thread-head"><b>' + esc(chatDisplayName(d)) + '</b>' +
+        '<button class="small secondary" type="button" onclick="backToBotChatList()">Back to chats</button></div>';
+      if (!msgs.length) {
+        threadEl.innerHTML = head + '<p class="empty-note">No messages in this chat yet.</p>';
+        return;
+      }
+      threadEl.innerHTML = head + msgs.map(function (m) {
+        var cls = m.dir === 'out' ? 'out' : 'in';
+        var who = m.dir === 'out' ? 'Bot' : 'Customer';
+        return '<div class="chat-bubble ' + cls + '">' + esc(m.text || '') +
+          '<span class="chat-time">' + esc(who) + (m.phone ? ' · ' + esc(m.phone) : '') + ' · ' + esc(fmtTime(m.at) || '') + '</span></div>';
+      }).join('');
+      threadEl.scrollTop = threadEl.scrollHeight;
+    } catch (e) {
+      threadEl.innerHTML = '<p class="empty-note">Could not load this conversation — try again.</p>';
+    }
+  };
+
+  window.backToBotChatList = function () {
+    document.getElementById('botChatThread').innerHTML = '<p class="empty-note">Select a chat to see the conversation.</p>';
+    var items = document.querySelectorAll('.chat-list-item');
+    for (var i = 0; i < items.length; i++) items[i].classList.remove('active');
+  };
+
+  window.closeBotChats = function () {
+    var section = document.getElementById('botChatsSection');
+    if (section) section.hidden = true;
+    botChatsBusinessId = '';
+    botChatsBusinessName = '';
+  };
 
   window.loadOverview = async function () {
     if (!token) { showPrivate(); return; }
