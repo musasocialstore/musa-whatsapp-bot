@@ -42,6 +42,19 @@ function defaultBusiness(id) {
     campaigns: [], // Bulk Messages: { id, type: 'send'|'draft', message, numbers: [{phone, status, error}], status, createdAt, sentCount, failedCount }
     linked: false,
     linkedAt: null,
+    // Multi-account (2026-11-26): one business can link MULTIPLE
+    // WhatsApp numbers. accounts[] is the record of them:
+    // [{ phone, linked, linkedAt }] — accounts[0] is the primary and
+    // business.phone / business.linked / business.linkedAt mirror it
+    // for backward compatibility. The Brain (prompt, brainSummary,
+    // learnedQA) is per business and shared by every account.
+    accounts: [],
+    // Last logout (2026-11-26): set when a session is revoked by
+    // WhatsApp (401/loggedOut) — { at, code, reason, phone, hint }.
+    // A revoked identity is dead; only a fresh pairing code revives
+    // it. Survives restarts so the admin can see WHEN and WHY a link
+    // died. Null when no logout has ever been recorded.
+    lastLogout: null,
     createdAt: new Date().toISOString(),
   };
 }

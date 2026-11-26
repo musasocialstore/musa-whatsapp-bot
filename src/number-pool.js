@@ -13,6 +13,20 @@ const fs = require('fs');
 const path = require('path');
 const store = require('./store');
 
+// Claim rules (2026-11-26, Zaib approved multi-account pairing):
+//   EXCLUSIVE_TAKE = true — a number claimed by one business can NEVER
+//   be claimed by another business. Flipping this to false is the
+//   pending copy-vs-take decision — Zaib has NOT answered it yet, so
+//   do NOT change exclusivity here.
+//   ONE_PER_ACCOUNT = true — one pool number per ACCOUNT, not per
+//   business. A business holding one claimed number CAN claim another
+//   one for a second linked WhatsApp account. business.claimedPhones
+//   tracks every number the business holds; business.claimedPhone and
+//   business.phone stay the FIRST (primary) number for backward
+//   compatibility with anything that reads the single-number fields.
+const EXCLUSIVE_TAKE = true;
+const ONE_PER_ACCOUNT = true;
+
 const POOL_FILE = path.join(store.DATA_DIR, 'number-pool.json');
 
 function loadPool() {
@@ -84,34 +98,49 @@ function addNumbersToPool(pool, phones, inUsePhones) {
 
 // Claim one pool number for a business. Pure function, no I/O — the
 // caller saves the pool and the business afterwards. Rules in order:
-// (1) the phone must be valid, (2) the business must not already hold
-// a claimed number, (3) the number must be in the pool and available.
-// On success the pool entry and the business are mutated in place:
-// the number becomes the business's own number (business.phone) —
-// claiming is NOT linking, business.linked is never touched here.
+// (1) the phone must be valid, (2) the number must be in the pool and
+// available — with EXCLUSIVE_TAKE a number claimed by one business can
+// never be claimed by another, (3) with ONE_PER_ACCOUNT a business may
+// hold one number per ACCOUNT, so holding one claimed number does NOT
+// block claiming another for a second account. On success the pool
+// entry and the business are mutated in place: the number joins
+// business.claimedPhones, and business.claimedPhone / business.phone
+// are set only when the business holds no number yet (they stay the
+// primary/first number — a second claim never overwrites them).
+// Claiming is NOT linking — business.linked is never touched here.
 function claimNumber(pool, business, phone) {
   const normalized = normalizePoolPhone(phone);
   if (!normalized) return { ok: false, error: 'Valid phone number is required, 10-15 digits' };
-  if (business.claimedPhone) {
-    return { ok: false, error: 'This business already claimed ' + business.claimedPhone + ' — one number per business. Release it first to claim another.' };
-  }
   const entry = (pool.numbers || []).find((n) => n.phone === normalized);
   if (!entry || entry.status !== 'available') {
     return { ok: false, error: 'This number is not available — it was already claimed or was never added to the pool.' };
   }
+  if (EXCLUSIVE_TAKE && entry.claimedBy && entry.claimedBy !== business.id) {
+    return { ok: false, error: 'This number is not available — it was already claimed or was never added to the pool.' };
+  }
+  if (!ONE_PER_ACCOUNT && business.claimedPhone) {
+    return { ok: false, error: 'This business already claimed ' + business.claimedPhone + ' — one number per business. Release it first to claim another.' };
+  }
   entry.status = 'claimed';
   entry.claimedBy = business.id;
   entry.claimedAt = new Date().toISOString();
-  business.claimedPhone = normalized;
-  business.phone = normalized;
+  business.claimedPhones = Array.isArray(business.claimedPhones)
+    ? business.claimedPhones
+    : (business.claimedPhone ? [business.claimedPhone] : []);
+  if (!business.claimedPhones.includes(normalized)) business.claimedPhones.push(normalized);
+  if (!business.claimedPhone) business.claimedPhone = normalized;
+  if (!business.phone) business.phone = normalized;
   return { ok: true, phone: normalized };
 }
 
 // Release a number back to the pool. Pure function, no I/O — the
 // caller saves the pool and the business afterwards. Only the business
 // that claimed the number can release it, and only a claimed number
-// can be released. The business's own number is cleared only when it
-// is the released number.
+// can be released. The number leaves business.claimedPhones; when it
+// was the first (primary) claimed number, the next claimed number is
+// promoted to claimedPhone / phone, and when nothing is claimed any
+// more both are cleared. A number the business paired but never
+// claimed is untouched here — release only ever frees pool claims.
 function releaseNumber(pool, business, phone) {
   const normalized = normalizePoolPhone(phone);
   const entry = (pool.numbers || []).find((n) => n.phone === normalized);
@@ -120,9 +149,46 @@ function releaseNumber(pool, business, phone) {
   entry.status = 'available';
   entry.claimedBy = null;
   entry.claimedAt = null;
+  business.claimedPhones = Array.isArray(business.claimedPhones)
+    ? business.claimedPhones.filter((p) => p !== normalized)
+    : (business.claimedPhone && business.claimedPhone !== normalized ? [business.claimedPhone] : []);
   if (business.claimedPhone === normalized) {
-    delete business.claimedPhone;
-    if (business.phone === normalized) business.phone = '';
+    const next = business.claimedPhones[0] || '';
+    if (next) {
+      business.claimedPhone = next;
+      if (business.phone === normalized) business.phone = next;
+    } else {
+      delete business.claimedPhone;
+      if (business.phone === normalized) business.phone = '';
+    }
+  }
+  // A released number must not linger as a pairable account: drop its
+  // accounts[] entry (if any), so this business cannot re-pair a number
+  // another business now holds — WhatsApp would revoke one of the two
+  // sessions. Then re-mirror the primary account (same rule as
+  // syncPrimaryLinkFields in whatsapp.js). When the last account goes,
+  // the linked flag is cleared only if the dropped entry itself was
+  // linked — a legacy business with linked=true but no accounts[]
+  // entries keeps its flag.
+  if (Array.isArray(business.accounts)) {
+    let droppedLinked = false;
+    const kept = [];
+    for (const a of business.accounts) {
+      if (a && a.phone === normalized) { if (a.linked === true) droppedLinked = true; }
+      else kept.push(a);
+    }
+    if (kept.length !== business.accounts.length) {
+      business.accounts = kept;
+      if (kept.length > 0) {
+        const p = kept[0];
+        if (p.phone) business.phone = p.phone;
+        business.linked = p.linked === true;
+        business.linkedAt = p.linked === true ? (p.linkedAt || business.linkedAt || null) : null;
+      } else if (droppedLinked) {
+        business.linked = false;
+        business.linkedAt = null;
+      }
+    }
   }
   return { ok: true, phone: normalized };
 }
@@ -176,4 +242,4 @@ function totalNumbersUploaded(pool) {
   return total;
 }
 
-module.exports = { POOL_FILE, loadPool, savePool, normalizePoolPhone, addNumbersToPool, claimNumber, releaseNumber, recordPoolUpload, totalNumbersUploaded, seedPoolHistoryIfMissing, POOL_HISTORY_MAX };
+module.exports = { POOL_FILE, loadPool, savePool, normalizePoolPhone, addNumbersToPool, claimNumber, releaseNumber, recordPoolUpload, totalNumbersUploaded, seedPoolHistoryIfMissing, POOL_HISTORY_MAX, EXCLUSIVE_TAKE, ONE_PER_ACCOUNT };
